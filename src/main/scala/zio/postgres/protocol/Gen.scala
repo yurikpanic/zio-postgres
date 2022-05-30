@@ -74,7 +74,13 @@ object Gen {
           case '{ Field.Bytes($xs) } => genByteBuffer(tl, symtab, '{ ${ acc }.put(${ xs }.toArray) }, length)
           case '{ Field.String($s) } =>
             s.value match {
-              case Some(_) => genByteBuffer(tl, symtab, '{ ${ acc }.put(${ s }.getBytes(UTF_8)).put(0: Byte) }, length)
+              case Some(s) =>
+                genByteBuffer(
+                  tl,
+                  symtab,
+                  '{ ${ acc }.put(${ Expr(s.getBytes(UTF_8).appended(0: Byte)) }) },
+                  length
+                )
               case None =>
                 symtab.get(idx) match {
                   case None => report.errorAndAbort(s"Byte representation of string field $idx was not found")
@@ -121,7 +127,7 @@ object Gen {
                 },
                 'length
               )
-            }
+            }.rewind
           )
         }
     }
