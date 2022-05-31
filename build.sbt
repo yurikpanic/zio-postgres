@@ -10,5 +10,6 @@ lazy val root = project
       "org.scalameta" %% "munit" % "0.7.29" % Test,
       "dev.zio" %% "zio" % "2.0.0-RC6",
       "dev.zio" %% "zio-streams" % "2.0.0-RC6"
-    )
+    ),
+    run / fork := true
   )

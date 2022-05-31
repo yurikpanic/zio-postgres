@@ -5,6 +5,7 @@ import zio.*
 import zio.stream.*
 
 import java.io.IOException
+import java.nio.ByteBuffer
 
 import protocol._
 
@@ -20,7 +21,9 @@ object Connection {
     case Init
   }
 
-  def handleConn(protoP: Promise[Nothing, Protocol]): (State, Parser.Packet) => UIO[State] = ???
+  def handleConn(protoP: Promise[Nothing, Protocol]): (State, Parser.Packet) => UIO[State] = { (state, _) =>
+    ZIO.succeed(state)
+  }
 
   val live: URLayer[Socket & Parser, Connection] = ZLayer {
     for {
@@ -29,7 +32,7 @@ object Connection {
     } yield new Connection {
       override def init: ZIO[Config, IOException, Protocol] = {
         val prog = for {
-          q <- Queue.unbounded[Byte]
+          q <- Queue.unbounded[ByteBuffer]
           parser <- ZIO.service[Parser]
           protoP <- Promise.make[Nothing, Protocol]
           out = ZStream.fromQueue(q).run(socket.sink)
@@ -39,7 +42,7 @@ object Connection {
             .zipParRight {
               for {
                 cfg <- ZIO.service[Config]
-                _ <- q.offerAll(Messages.startupMessage(user = cfg.user, database = cfg.database))
+                _ <- q.offer(Messages.startupMessage(user = cfg.user, database = cfg.database))
                 res <- protoP.await
               } yield res
             }

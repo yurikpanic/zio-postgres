@@ -1,7 +1,7 @@
 package zio.postgres.protocol
 
-import zio._
-import zio.stream._
+import zio.*
+import zio.stream.*
 
 trait Parser {
   def pipeline: ZPipeline[Any, Nothing, Byte, Parser.Packet]
@@ -13,14 +13,19 @@ object Parser {
     case Generic(`type`: Byte, payload: Chunk[Byte])
   }
 
-  def pipeline: ZPipeline[Parser, Nothing, Byte, Parser.Packet] =
+  def pipeline: ZPipeline[Parser, Nothing, Byte, Packet] =
     ZPipeline.fromChannel(
       ZChannel.serviceWithChannel[Parser](_.pipeline.channel)
     )
 
   def live: ULayer[Parser] = ZLayer.succeed {
     new Parser {
-      override def pipeline: ZPipeline[Any, Nothing, Byte, Parser.Packet] = ???
+
+      override def pipeline: ZPipeline[Any, Nothing, Byte, Packet] =
+        ZPipeline.fromPush(ZIO.succeed { in =>
+          println(s"=============> $in")
+          ZIO.succeed(Chunk.empty)
+        })
     }
   }
 }

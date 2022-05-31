@@ -2,11 +2,11 @@ package zio.postgres.protocol
 
 import zio.*
 
-import java.nio.charset.StandardCharsets.UTF_8
-import scala.quoted.*
-import scala.annotation.meta.field
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets.UTF_8
+import scala.annotation.meta.field
+import scala.quoted.*
 
 object Gen {
 
@@ -98,7 +98,7 @@ object Gen {
       fields: List[(Expr[Field], Int)],
       symtab: Map[Int, Expr[Array[Byte]]],
       allFields: List[(Expr[Field], Int)]
-  )(using quotes: Quotes): Expr[Chunk[Byte]] = {
+  )(using quotes: Quotes): Expr[ByteBuffer] = {
     fields match {
       case (curExpr, idx) :: tl =>
         curExpr match {
@@ -118,25 +118,23 @@ object Gen {
         '{
           val length = ${ lengthImpl(allFields, symtab) }
 
-          Chunk.fromByteBuffer(
-            ${
-              genByteBuffer(
-                allFields,
-                symtab,
-                '{
-                  ByteBuffer
-                    .allocate(length)
-                    .order(ByteOrder.BIG_ENDIAN)
-                },
-                'length
-              )
-            }.rewind
-          )
+          ${
+            genByteBuffer(
+              allFields,
+              symtab,
+              '{
+                ByteBuffer
+                  .allocate(length)
+                  .order(ByteOrder.BIG_ENDIAN)
+              },
+              'length
+            )
+          }.rewind
         }
     }
   }
 
-  def makeImpl(fields: Expr[Seq[Field]])(using Quotes): Expr[Chunk[Byte]] = {
+  def makeImpl(fields: Expr[Seq[Field]])(using Quotes): Expr[ByteBuffer] = {
     import quotes.reflect.report
     fields match {
       case Varargs(fieldExprs) =>
@@ -148,6 +146,6 @@ object Gen {
     }
   }
 
-  inline def make(inline fields: Field*): Chunk[Byte] = ${ makeImpl('fields) }
+  inline def make(inline fields: Field*): ByteBuffer = ${ makeImpl('fields) }
 
 }
