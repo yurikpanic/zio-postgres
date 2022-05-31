@@ -105,7 +105,10 @@ object Gen {
           case '{ Field.String($s) } =>
             s.value match {
               case None =>
-                '{ val x = ${ s }.getBytes(UTF_8); ${ genStrBytes(tl, symtab + (idx -> 'x), allFields) } }
+                '{
+                  val x = ${ s }.getBytes(UTF_8)
+                  ${ genStrBytes(tl, symtab + (idx -> 'x), allFields) }
+                }
 
               case _ => genStrBytes(tl, symtab, allFields)
             }
@@ -138,11 +141,7 @@ object Gen {
     fields match {
       case Varargs(fieldExprs) =>
         val fieldExprsWithIdx = fieldExprs.toList.zipWithIndex
-        val e = genStrBytes(fieldExprsWithIdx, Map.empty, fieldExprsWithIdx)
-
-        // sys.error(e.show)
-
-        e
+        genStrBytes(fieldExprsWithIdx, Map.empty, fieldExprsWithIdx)
 
       case other =>
         report.errorAndAbort("Expected explicit argument. Notation `args: _*` is not supported.", other)
