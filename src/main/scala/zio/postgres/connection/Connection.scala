@@ -30,10 +30,14 @@ object Connection {
     override def init: ZIO[Config, IOException, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
-        parser <- ZIO.service[Parser]
         protoP <- Promise.make[Nothing, Protocol]
         out = ZStream.fromQueue(q).run(socket.sink)
-        in = socket.stream.via(parser.pipeline).run(ZSink.foldLeftZIO(State.Init)(handleConn(protoP)))
+        in = socket.stream
+          .via(Parser.pipeline)
+          .tap { p =>
+            ZIO.succeedBlocking(println(s"=====packet===> $p"))
+          }
+          .run(ZSink.foldLeftZIO(State.Init)(handleConn(protoP)))
         res <- out
           .zipParRight(in)
           .zipParRight {
