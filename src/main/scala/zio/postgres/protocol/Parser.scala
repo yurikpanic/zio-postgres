@@ -18,14 +18,13 @@ object Parser {
       ZChannel.serviceWithChannel[Parser](_.pipeline.channel)
     )
 
-  def live: ULayer[Parser] = ZLayer.succeed {
-    new Parser {
-
-      override def pipeline: ZPipeline[Any, Nothing, Byte, Packet] =
-        ZPipeline.fromPush(ZIO.succeed { in =>
-          println(s"=============> $in")
-          ZIO.succeed(Chunk.empty)
-        })
-    }
+  case class Live() extends Parser {
+    override def pipeline: ZPipeline[Any, Nothing, Byte, Packet] =
+      ZPipeline.fromPush(ZIO.succeed { in =>
+        println(s"=============> $in")
+        ZIO.succeed(Chunk.empty)
+      })
   }
+
+  def live: ULayer[Parser] = ZLayer.succeed(Live())
 }
