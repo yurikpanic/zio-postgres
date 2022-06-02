@@ -10,12 +10,17 @@ import java.nio.ByteBuffer
 import protocol._
 
 trait Connection {
-  def init: ZIO[Config, IOException, Protocol]
+  def init: ZIO[Config, Connection.Error, Protocol]
 }
 
 object Connection {
-  def init: ZIO[Config & Connection, IOException, Protocol] =
+  def init: ZIO[Config & Connection, Error, Protocol] =
     ZIO.serviceWithZIO[Connection](_.init)
+
+  enum Error {
+    case IO(cause: IOException)
+    case Parse(error: Packet.ParseError)
+  }
 
   enum State {
     case Init
@@ -23,17 +28,18 @@ object Connection {
 
   case class Live(socket: Socket, parser: Parser) extends Connection {
 
-    def handleConn(protoP: Promise[Nothing, Protocol]): (State, Parser.Packet) => UIO[State] = { (state, _) =>
+    def handleConn(protoP: Promise[Nothing, Protocol]): (State, Packet) => UIO[State] = { (state, _) =>
       ZIO.succeed(state) // TODO
     }
 
-    override def init: ZIO[Config, IOException, Protocol] = {
+    override def init: ZIO[Config, Error, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
         protoP <- Promise.make[Nothing, Protocol]
-        out = ZStream.fromQueue(q).run(socket.sink)
+        out = ZStream.fromQueue(q).run(socket.sink).mapError(Error.IO(_))
         in = socket.stream
-          .via(Parser.pipeline)
+          .mapError(Error.IO(_))
+          .via(new ZPipeline(Parser.pipeline.channel.mapError(Error.Parse(_))))
           .tap { p =>
             ZIO.succeedBlocking(println(s"=====packet===> $p"))
           }
@@ -43,7 +49,7 @@ object Connection {
           .zipParRight {
             for {
               cfg <- ZIO.service[Config]
-              _ <- q.offer(Messages.startupMessage(user = cfg.user, database = cfg.database))
+              _ <- q.offer(Packet.startupMessage(user = cfg.user, database = cfg.database))
               res <- protoP.await
             } yield res
           }

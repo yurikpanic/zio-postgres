@@ -5,18 +5,15 @@ import zio.stream.*
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import scala.util.chaining.*
 
 trait Parser {
-  def pipeline: ZPipeline[Any, ZNothing, Byte, Parser.Packet]
+  def pipeline: ZPipeline[Any, Packet.ParseError, Byte, Packet]
 }
 
 object Parser {
 
-  enum Packet {
-    case Generic(`type`: Byte, payload: Chunk[Byte])
-  }
-
-  def pipeline: ZPipeline[Parser, ZNothing, Byte, Packet] =
+  def pipeline: ZPipeline[Parser, Packet.ParseError, Byte, Packet] =
     ZPipeline.fromChannel(
       ZChannel.serviceWithChannel[Parser](_.pipeline.channel)
     )
@@ -27,10 +24,10 @@ object Parser {
   }
 
   case class Live() extends Parser {
-    override def pipeline: ZPipeline[Any, ZNothing, Byte, Packet] =
+    override def pipeline: ZPipeline[Any, Packet.ParseError, Byte, Packet] =
       ZPipeline.suspend {
 
-        type DecodingChannel = ZChannel[Any, ZNothing, Chunk[Byte], Any, ZNothing, Chunk[Packet], Any]
+        type DecodingChannel = ZChannel[Any, ZNothing, Chunk[Byte], Any, Packet.ParseError, Chunk[Packet], Any]
 
         def decode(buffer: Chunk[Byte], state: State): DecodingChannel = ZChannel.readWith(
           received => {
@@ -52,7 +49,7 @@ object Parser {
                   val (payload, rest) = data.splitAt(length)
 
                   val in = ZChannel.write(rest) >>> decode(Chunk.empty, State.WaitTypeAndLength)
-                  val out = ZChannel.write(Chunk(Packet.Generic(tpe, payload)))
+                  val out = Packet.parse(tpe, payload).fold(ZChannel.fail(_), Chunk(_).pipe(ZChannel.write(_)))
 
                   out *> in
                 } else {
