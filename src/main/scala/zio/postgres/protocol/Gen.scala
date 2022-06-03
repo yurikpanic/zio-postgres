@@ -60,7 +60,8 @@ object Gen {
     fields match {
       case (curExpr, idx) :: tl =>
         curExpr match {
-          case '{ Field.Length }    => genByteBuffer(tl, symtab, '{ ${ acc }.putInt($length) }, length)
+          case '{ Field.Length } =>
+            genByteBuffer(tl, symtab, '{ ${ acc }.putInt($length - ${ acc }.position()) }, length)
           case '{ Field.Type($x) }  => genByteBuffer(tl, symtab, '{ ${ acc }.put(${ x }) }, length)
           case '{ Field.Int32($x) } => genByteBuffer(tl, symtab, '{ ${ acc }.putInt(${ x }) }, length)
 

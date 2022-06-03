@@ -138,6 +138,13 @@ object Packet {
       Field.Byte(0) // terminator
     )
 
+  def passwordMessage(password: String): ByteBuffer =
+    Gen.make(
+      Field.Byte('p'),
+      Field.Length,
+      Field.String(password)
+    )
+
   extension (bb: ByteBuffer) {
     def getString: Option[String] = {
       val pos = bb.position()

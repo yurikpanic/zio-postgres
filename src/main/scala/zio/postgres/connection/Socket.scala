@@ -31,17 +31,15 @@ object Socket {
       case None => ZIO.unit
     })
 
-    val _stream = ZStream.fromPull(
+    val bb = ByteBuffer.allocate(512)
+
+    val _stream = ZStream.repeatZIOChunk(
       for {
-        bb <- ZIO.succeed(ByteBuffer.allocate(512))
-      } yield {
-        for {
-          _ <- ZIO.succeed(bb.clear)
-          read <- ZIO.attemptBlockingIO(channel.read(bb))
-          _ <- ZIO.succeed(bb.limit(read))
-          _ <- ZIO.succeed(bb.rewind)
-        } yield Chunk.fromByteBuffer(bb)
-      }.mapError(Option(_))
+        _ <- ZIO.succeed(bb.clear)
+        read <- ZIO.attemptBlockingIO(channel.read(bb))
+        _ <- ZIO.succeed(bb.limit(read))
+        _ <- ZIO.succeed(bb.rewind)
+      } yield Chunk.fromByteBuffer(bb)
     )
 
     override def sink: ZSink[Any, IOException, ByteBuffer, ByteBuffer, Unit] = _sink
