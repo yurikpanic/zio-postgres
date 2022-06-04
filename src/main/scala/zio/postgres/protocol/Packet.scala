@@ -152,7 +152,7 @@ object Packet {
       Field.Length,
       Field.String(mechanism),
       Field.Int32(_message.length),
-      Field.Bytes(_message)
+      Field.Bytes(_message.toIndexedSeq)
     )
   }
 
@@ -161,7 +161,7 @@ object Packet {
     Gen.make(
       Field.Byte('p'),
       Field.Length,
-      Field.Bytes(_message)
+      Field.Bytes(_message.toIndexedSeq)
     )
   }
 

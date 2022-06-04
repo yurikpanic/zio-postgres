@@ -10,11 +10,11 @@ import java.nio.ByteBuffer
 import protocol._
 
 trait Connection {
-  def init: ZIO[Config, Connection.Error, Protocol]
+  def init: ZIO[Config & Scope, Connection.Error, Protocol]
 }
 
 object Connection {
-  def init: ZIO[Config & Connection, Error, Protocol] =
+  def init: ZIO[Config & Scope & Connection, Error, Protocol] =
     ZIO.serviceWithZIO[Connection](_.init)
 
   enum Error {
@@ -33,7 +33,7 @@ object Connection {
       ZIO.succeed(state) // TODO
     }
 
-    override def init: ZIO[Config, Error, Protocol] = {
+    override def init: ZIO[Config & Scope, Error, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
         protoP <- Promise.make[Nothing, Protocol]
@@ -58,7 +58,7 @@ object Connection {
           }
       } yield res
 
-      prog.provideSome[Config](ZLayer.succeed(parser) ++ ZLayer.succeed(auth))
+      prog.provideSome[Config & Scope](ZLayer.succeed(parser) ++ ZLayer.succeed(auth))
     }
   }
 

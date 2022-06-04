@@ -1,6 +1,8 @@
 package zio.postgres
 package connection
 
+import com.bolyartech.scram_sasl.client.ScramSaslClientProcessor
+import com.bolyartech.scram_sasl.client.ScramSha256SaslClientProcessor
 import zio.*
 import zio.stream.*
 
@@ -10,7 +12,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import protocol.Packet
 
 trait Auth { self =>
-  def pipeline(q: Queue[ByteBuffer]): ZPipeline[Config, Auth.Error, Packet, Packet]
+  def pipeline(q: Queue[ByteBuffer]): ZPipeline[Scope & Config, Auth.Error, Packet, Packet]
 
   def andThen(auth: Auth): Auth = new Auth {
     override def pipeline(q: Queue[ByteBuffer]) =
@@ -25,7 +27,7 @@ object Auth {
     case SaslException(e: Throwable)
   }
 
-  def pipeline(q: Queue[ByteBuffer]): ZPipeline[Auth & Config, Error, Packet, Packet] =
+  def pipeline(q: Queue[ByteBuffer]): ZPipeline[Auth & Scope & Config, Error, Packet, Packet] =
     ZPipeline.fromChannel(
       ZChannel.serviceWithChannel[Auth](_.pipeline(q).channel)
     )
@@ -51,43 +53,31 @@ object Auth {
 
     val supportedMechanism = "SCRAM-SHA-256"
 
-    import com.bolyartech.scram_sasl.client.ScramSaslClientProcessor
-    import com.bolyartech.scram_sasl.server.ScramSaslServerProcessor
-    import com.bolyartech.scram_sasl.client.ScramSha256SaslClientProcessor
-
     override def pipeline(q: Queue[ByteBuffer]) = ZPipeline.fromChannel {
       ZChannel
-        .fromZIO(ZIO.runtime)
-        .flatMap { rt =>
+        .fromZIO {
+          val msgQ = Queue.unbounded[String].flatMap { msgQ =>
+            ZStream
+              .fromQueue(msgQ)
+              .mapAccum(true) {
+                case (true, s)  => false -> Packet.saslInitialResponseMessage(supportedMechanism, s)
+                case (false, s) => false -> Packet.saslResponseMessage(s)
+              }
+              .run(ZSink.fromQueue(q))
+              .forkScoped
+              .as(msgQ)
+          }
+          ZIO.runtime zip msgQ
+        }
+        .flatMap { case (rt, msgQ) =>
           val listener = new ScramSaslClientProcessor.Listener {
             override def onSuccess(): Unit = ()
             override def onFailure(): Unit = ()
           }
 
-          val sender = {
-            var firstRun: Boolean = true
-
-            new ScramSaslClientProcessor.Sender {
-              override def sendMessage(msg: String): Unit = {
-                rt.unsafeRunAsync {
-                  if (firstRun) q.offer(Packet.saslInitialResponseMessage(supportedMechanism, msg))
-                  else q.offer(Packet.saslResponseMessage(msg))
-                }
-                firstRun = false
-              }
-            }
+          val sender = new ScramSaslClientProcessor.Sender {
+            override def sendMessage(msg: String): Unit = rt.unsafeRunAsync(msgQ.offer(msg))
           }
-
-          // val ppp = Queue.unbounded[String].flatMap { msgQ =>
-          //   ZStream
-          //     .fromQueue(msgQ)
-          //     .mapAccum(true) {
-          //       case (true, s)  => false -> Packet.saslInitialResponseMessage(supportedMechanism, s)
-          //       case (false, s) => false -> Packet.saslResponseMessage(s)
-          //     }
-          //     .run(ZSink.fromQueue(q))
-          //     .forkScoped
-          // }
 
           ZChannel.fromZIO {
             ZIO

@@ -12,5 +12,11 @@ lazy val root = project
       "dev.zio" %% "zio-streams" % "2.0.0-RC6",
       "com.bolyartech.scram_sasl" % "scram_sasl" % "2.0.2"
     ),
+    scalacOptions ++= Seq(
+      "-deprecation",
+      "-encoding",
+      "UTF-8",
+      "-feature"
+    ),
     run / fork := true
   )
