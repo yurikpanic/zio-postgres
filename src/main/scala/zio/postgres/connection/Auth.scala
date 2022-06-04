@@ -5,6 +5,7 @@ import zio.*
 import zio.stream.*
 
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets.UTF_8
 
 import protocol.Packet
 
@@ -21,6 +22,7 @@ object Auth {
 
   enum Error {
     case NotSupported(kind: Packet.AuthRequest.Kind)
+    case SaslException(e: Throwable)
   }
 
   def pipeline(q: Queue[ByteBuffer]): ZPipeline[Auth & Config, Error, Packet, Packet] =
@@ -45,8 +47,83 @@ object Auth {
       }
   }
 
-  object Md5 extends Auth {
-    override def pipeline(q: Queue[ByteBuffer]) = ZPipeline.identity // TODO
+  object Sasl extends Auth {
+
+    val supportedMechanism = "SCRAM-SHA-256"
+
+    import com.bolyartech.scram_sasl.client.ScramSaslClientProcessor
+    import com.bolyartech.scram_sasl.server.ScramSaslServerProcessor
+    import com.bolyartech.scram_sasl.client.ScramSha256SaslClientProcessor
+
+    override def pipeline(q: Queue[ByteBuffer]) = ZPipeline.fromChannel {
+      ZChannel
+        .fromZIO(ZIO.runtime)
+        .flatMap { rt =>
+          val listener = new ScramSaslClientProcessor.Listener {
+            override def onSuccess(): Unit = ()
+            override def onFailure(): Unit = ()
+          }
+
+          val sender = {
+            var firstRun: Boolean = true
+
+            new ScramSaslClientProcessor.Sender {
+              override def sendMessage(msg: String): Unit = {
+                rt.unsafeRunAsync {
+                  if (firstRun) q.offer(Packet.saslInitialResponseMessage(supportedMechanism, msg))
+                  else q.offer(Packet.saslResponseMessage(msg))
+                }
+                firstRun = false
+              }
+            }
+          }
+
+          // val ppp = Queue.unbounded[String].flatMap { msgQ =>
+          //   ZStream
+          //     .fromQueue(msgQ)
+          //     .mapAccum(true) {
+          //       case (true, s)  => false -> Packet.saslInitialResponseMessage(supportedMechanism, s)
+          //       case (false, s) => false -> Packet.saslResponseMessage(s)
+          //     }
+          //     .run(ZSink.fromQueue(q))
+          //     .forkScoped
+          // }
+
+          ZChannel.fromZIO {
+            ZIO
+              .attempt(new ScramSha256SaslClientProcessor(listener, sender))
+              .mapError(Error.SaslException(_))
+          }
+        }
+        .flatMap { client =>
+          ZChannel.identity
+            .mapOutZIO { ps =>
+              def saslContinue(data: Array[Byte]) = ZIO
+                .attempt(client.onMessage(new String(data, UTF_8)))
+                .mapError(Error.SaslException(_))
+
+              ZIO.foldLeft(ps)(Chunk.empty[Packet]) {
+                case (acc, Packet.AuthRequest(Packet.AuthRequest.Kind.SASL(methods)))
+                    if methods.exists(_.compareToIgnoreCase(supportedMechanism) == 0) =>
+                  for {
+                    cfg <- ZIO.service[Config]
+                    _ <- ZIO
+                      .attempt(client.start(cfg.user, cfg.password))
+                      .mapError(Error.SaslException(_))
+                  } yield acc
+
+                case (acc, Packet.AuthRequest(Packet.AuthRequest.Kind.SASLContinue(data))) =>
+                  saslContinue(data).as(acc)
+
+                case (acc, Packet.AuthRequest(Packet.AuthRequest.Kind.SASLFinal(data))) =>
+                  saslContinue(data).as(acc)
+
+                case (acc, other) => ZIO.succeed(acc :+ other)
+              }
+            }
+        }
+
+    }
   }
 
   case object Fail extends Auth {
@@ -59,7 +136,7 @@ object Auth {
       }
   }
 
-  val live: ULayer[Auth] = ZLayer.succeed(Plain >>> Md5 >>> Fail)
+  val live: ULayer[Auth] = ZLayer.succeed(Plain >>> Sasl >>> Fail)
 
   extension (a: Auth) {
     def >>>(b: Auth) = a.andThen(b)

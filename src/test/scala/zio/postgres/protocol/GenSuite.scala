@@ -6,6 +6,12 @@ class GenSuite extends munit.FunSuite {
   test("Generate initial mesage from fields") {
     val user = "someuser"
     val database = "somedatabase"
+    val l = database.getBytes().length
+    Gen.make(
+      Field.Byte('p'),
+      Field.Length,
+      Field.Int32(l)
+    )
     assertEquals(
       Chunk.fromByteBuffer(
         Gen

@@ -145,6 +145,26 @@ object Packet {
       Field.String(password)
     )
 
+  def saslInitialResponseMessage(mechanism: String, message: String): ByteBuffer = {
+    val _message = message.getBytes(UTF_8)
+    Gen.make(
+      Field.Byte('p'),
+      Field.Length,
+      Field.String(mechanism),
+      Field.Int32(_message.length),
+      Field.Bytes(_message)
+    )
+  }
+
+  def saslResponseMessage(message: String): ByteBuffer = {
+    val _message = message.getBytes(UTF_8)
+    Gen.make(
+      Field.Byte('p'),
+      Field.Length,
+      Field.Bytes(_message)
+    )
+  }
+
   extension (bb: ByteBuffer) {
     def getString: Option[String] = {
       val pos = bb.position()
