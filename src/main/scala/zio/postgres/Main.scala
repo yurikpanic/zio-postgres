@@ -8,7 +8,9 @@ import protocol.*
 object Main extends ZIOAppDefault {
   override def run = (for {
     conn <- ZIO.service[Connection]
-    _ <- conn.init
+    proto <- conn.init
+    res <- proto.simpleQuery("select * from test")
+    _ <- Console.printLine(s"Result: $res")
   } yield ()).provideSome[Scope](
     Connection.live,
     Parser.live,

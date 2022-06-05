@@ -21,40 +21,54 @@ object Connection {
     case IO(cause: IOException)
     case Parse(error: Packet.ParseError)
     case Auth(error: connection.Auth.Error)
+    case Unexpected(message: String)
   }
 
   enum State {
     case Init
+    case Run(protocol: Protocol)
   }
 
   case class Live(socket: Socket, parser: Parser, auth: Auth) extends Connection {
 
-    def handleConn(protoP: Promise[Nothing, Protocol]): (State, Packet) => UIO[State] = { (state, p) =>
-      ZIO.succeed(state) // TODO
+    def handleConn(
+        outQ: Queue[ByteBuffer],
+        packets: ZStream[Any, Error, Packet]
+    ): (State, Packet) => URIO[Parser & Scope, State] = {
+      case (State.Init, Packet.ReadyForQuery(Packet.ReadyForQuery.TransactionStatus.Idle)) =>
+        Protocol.live(outQ, packets).map(State.Run(_))
+
+      case (State.Init, _)       => ZIO.succeed(State.Init)
+      case (r @ State.Run(_), _) => ZIO.succeed(r)
     }
 
     override def init: ZIO[Config & Scope, Error, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
-        protoP <- Promise.make[Nothing, Protocol]
-        out = ZStream.fromQueue(q).run(socket.sink).mapError(Error.IO(_)).map(x => println(s"out done"))
-        in = socket.stream
+        _ <- ZStream.fromQueue(q).run(socket.sink).mapError(Error.IO(_)).forkScoped
+        packets <- socket.stream
           .mapError(Error.IO(_))
           .via(new ZPipeline(Parser.pipeline.channel.mapError(Error.Parse(_))))
           .tap { p =>
             ZIO.succeedBlocking(println(s"=====packet===> $p"))
           }
+          .broadcast(2, 100)
+        in = packets(0)
           .via(new ZPipeline(Auth.pipeline(q).channel.mapError(Error.Auth(_))))
-          .run(ZSink.foldLeftZIO(State.Init)(handleConn(protoP)))
-          .map(x => println(s"in done: $x"))
-        res <- out
-          .zipParRight(in)
-          .zipParRight {
+          .runFoldWhileZIO(State.Init) {
+            case State.Run(_) => false
+            case _            => true
+          }(handleConn(q, packets(1)))
+          .flatMap {
+            case State.Run(p) => ZIO.succeed(p)
+            case state        => ZIO.fail(Error.Unexpected(s"Connection initialization is incomplete $state"))
+          }
+        res <- in
+          .zipParLeft {
             for {
               cfg <- ZIO.service[Config]
               _ <- q.offer(Packet.startupMessage(user = cfg.user, database = cfg.database))
-              res <- protoP.await
-            } yield res
+            } yield ()
           }
       } yield res
 
