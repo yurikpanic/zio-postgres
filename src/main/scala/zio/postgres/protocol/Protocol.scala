@@ -35,9 +35,8 @@ object Protocol {
   }
 
   enum State {
-    case Ready(next: List[CmdResp.Cmd])
-    // TODO: should we store a queue to send responses as a separate field in the state?
-    case QueryRespond(next: List[CmdResp.Cmd])
+    case Ready
+    case QueryRespond(respond: Option[Queue[Packet.DataRow]], next: List[CmdResp.Cmd])
   }
 
   case class Live(q: Queue[CmdResp.Cmd]) extends Protocol {
@@ -61,20 +60,27 @@ object Protocol {
     import CmdResp.Cmd._
 
     {
-      case (State.Ready(Nil), cmd @ Cmd(kind))      => sendCommand(outQ, kind).as(State.QueryRespond(cmd :: Nil))
-      case (State.QueryRespond(next), cmd @ Cmd(_)) => ZIO.succeed(State.QueryRespond(next ::: (cmd :: Nil)))
+      // we are idle and got a new query to run
+      case (State.Ready, cmd @ Cmd(kind)) => sendCommand(outQ, kind).as(State.QueryRespond(kind.respQueue, Nil))
+      // we are reading the results for the previous query, but got a new to run - store it in the state
+      case (State.QueryRespond(rq, next), cmd @ Cmd(_)) => ZIO.succeed(State.QueryRespond(rq, next ::: (cmd :: Nil)))
 
-      case (st @ State.QueryRespond(cur :: tl), Resp(dr @ Packet.DataRow(_))) =>
-        cur.kind.respQueue.fold(ZIO.succeed(st))(_.offer(dr).as(st))
+      // send current query result, the state is kept the same
+      case (st @ State.QueryRespond(respQueue, _), Resp(dr @ Packet.DataRow(_))) =>
+        respQueue.fold(ZIO.succeed(st))(_.offer(dr).as(st))
 
-      case (st @ State.QueryRespond(cur :: tl), Resp(Packet.Close(_, _))) =>
-        cur.kind.respQueue.fold(ZIO.succeed(st))(_.shutdown.as(st))
+      // query results are over - shutdown the results queue, but keep the state, dropping the queue
+      case (st @ State.QueryRespond(respQueue, next), Resp(Packet.Close(_, _))) =>
+        respQueue.fold(ZIO.succeed(st))(_.shutdown.as(State.QueryRespond(None, next)))
 
-      case (State.QueryRespond(Nil), Resp(Packet.ReadyForQuery(_))) => ZIO.succeed(State.Ready(Nil))
-      case (State.QueryRespond(h :: tl), Resp(Packet.ReadyForQuery(_))) =>
-        sendCommand(outQ, h.kind).as(State.QueryRespond(h :: tl)) // TODO: what if we are not waiting for responses?
+      // previous query is complete, we have nothing to run next
+      case (State.QueryRespond(_, Nil), Resp(Packet.ReadyForQuery(_))) => ZIO.succeed(State.Ready)
+      // previous query is complete, we already have a query to run next
+      case (State.QueryRespond(_, h :: tl), Resp(Packet.ReadyForQuery(_))) =>
+        sendCommand(outQ, h.kind).as(State.QueryRespond(h.kind.respQueue, tl))
 
-      case xx @ (s, _) => ZIO.succeedBlocking(println(xx)).as(s) // TODO
+      // ignore any other packets
+      case (s, _) => ZIO.succeed(s)
     }
   }
 
@@ -84,7 +90,7 @@ object Protocol {
       _ <- ZStream
         .fromQueue(q)
         .merge(in.map(CmdResp.Resp(_)))
-        .runFoldZIO(State.Ready(Nil))(handleProto(outQ))
+        .runFoldZIO(State.Ready)(handleProto(outQ))
         .fork
     } yield Live(q)
 

@@ -49,9 +49,7 @@ object Connection {
         packets <- socket.stream
           .mapError(Error.IO(_))
           .via(new ZPipeline(Parser.pipeline.channel.mapError(Error.Parse(_))))
-          .tap { p =>
-            ZIO.succeedBlocking(println(s"=====packet===> $p"))
-          }
+          .debug("packet")
           .broadcast(2, 100)
         in = packets(0)
           .via(new ZPipeline(Auth.pipeline(q).channel.mapError(Error.Auth(_))))
