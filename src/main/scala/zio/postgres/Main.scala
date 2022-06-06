@@ -9,9 +9,8 @@ object Main extends ZIOAppDefault {
   override def run = (for {
     conn <- ZIO.service[Connection]
     proto <- conn.init
-    res <- proto.simpleQuery("select * from test")
+    res <- proto.simpleQuery("select * from test").runCollect
     _ <- Console.printLine(s"Result: $res")
-    _ <- ZIO.sleep(5.seconds)
   } yield ()).provideSome[Scope](
     Connection.live,
     Parser.live,
