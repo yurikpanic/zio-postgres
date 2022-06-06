@@ -7,6 +7,7 @@ import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.util.Try
 import scala.util.chaining.*
+import scala.util.control.NonFatal
 
 enum Packet {
   case Generic(`type`: Byte, payload: Chunk[Byte])
@@ -14,6 +15,9 @@ enum Packet {
   case BackendKey(pid: Int, secret: Int)
   case ParameterStatus(name: String, value: String)
   case ReadyForQuery(status: Packet.ReadyForQuery.TransactionStatus)
+  case RowDescription(fields: List[Packet.RowDescription.Field])
+  case DataRow(fields: List[Option[Array[Byte]]])
+  case Close(kind: Packet.Close.Kind, name: String)
 }
 
 object Packet {
@@ -22,6 +26,7 @@ object Packet {
     case BufferUnderflow
     case UnknownAuthRequestKind(code: Int)
     case UnknownTransactionStatus(code: Byte)
+    case UnknownCloseKind(code: Byte)
   }
 
   object AuthRequest {
@@ -115,12 +120,117 @@ object Packet {
     }
   }
 
+  object RowDescription {
+    final case class Field(
+        name: String,
+        colOid: Int,
+        colNum: Short,
+        typeOid: Int,
+        typeSize: Short,
+        typeModifier: Int,
+        format: Short
+    )
+
+    object Field {
+      def parse(bb: ByteBuffer): Either[ParseError, Field] = {
+        for {
+          name <- bb.getString
+          colOid <- bb.getIntSafe
+          colNum <- bb.getShortSafe
+          typeOid <- bb.getIntSafe
+          typeSize <- bb.getShortSafe
+          typeModifier <- bb.getIntSafe
+          format <- bb.getShortSafe
+        } yield Field(
+          name,
+          colOid,
+          colNum,
+          typeOid,
+          typeSize,
+          typeModifier,
+          format
+        )
+      }
+        .toRight(ParseError.BufferUnderflow)
+
+    }
+
+    def parse(payload: Chunk[Byte]): Either[ParseError, Packet] = {
+      val bb = ByteBuffer.wrap(payload.toArray).order(ByteOrder.BIG_ENDIAN)
+
+      bb.getShortSafe
+        .toRight(ParseError.BufferUnderflow)
+        .flatMap { cnt =>
+          (0 until cnt)
+            .foldLeft[Either[ParseError, List[Field]]](Right(Nil)) { (acc, _) =>
+              acc.flatMap(acc => Field.parse(bb).map(_ :: acc))
+            }
+            .map { xs =>
+              RowDescription(xs.reverse)
+            }
+        }
+    }
+  }
+
+  object DataRow {
+
+    def parse(payload: Chunk[Byte]): Either[ParseError, Packet] = {
+      val bb = ByteBuffer.wrap(payload.toArray).order(ByteOrder.BIG_ENDIAN)
+
+      bb.getShortSafe
+        .toRight(ParseError.BufferUnderflow)
+        .flatMap { cnt =>
+          (0 until cnt)
+            .foldLeft[Either[ParseError, List[Option[Array[Byte]]]]](Right(Nil)) { (acc, _) =>
+              acc.flatMap { acc =>
+                (try {
+                  val len = bb.getInt
+                  if (len != -1) {
+                    val arr = new Array[Byte](len)
+                    bb.get(arr)
+                    Right(Some(arr))
+                  } else Right(None)
+                } catch {
+                  case NonFatal(_) => Left(ParseError.BufferUnderflow)
+                }).map(_ :: acc)
+              }
+            }
+            .map { xs =>
+              DataRow(xs.reverse)
+            }
+        }
+    }
+
+  }
+
+  object Close {
+    enum Kind {
+      case PreparedStatemen
+      case Portal
+    }
+
+    def parse(payload: Chunk[Byte]): Either[ParseError, Packet] = {
+      val bb = ByteBuffer.wrap(payload.toArray).order(ByteOrder.BIG_ENDIAN)
+
+      (bb.get() match {
+        case 'S' => Right(Kind.PreparedStatemen)
+        case 'P' => Right(Kind.Portal)
+        case x   => Left(ParseError.UnknownCloseKind(x))
+      }).flatMap { kind =>
+        bb.getString.map(Packet.Close(kind, _)).toRight(ParseError.BufferUnderflow)
+      }
+    }
+  }
+
   def parse(tpe: Byte, payload: Chunk[Byte]): Either[ParseError, Packet] = {
     tpe match {
       case 'R' => AuthRequest.Kind.parse(payload).map(Packet.AuthRequest(_))
       case 'K' => BackendKey.parse(payload)
       case 'S' => ParameterStatus.parse(payload)
       case 'Z' => ReadyForQuery.parse(payload)
+      case 'T' => RowDescription.parse(payload)
+      case 'D' => DataRow.parse(payload)
+      case 'C' => Close.parse(payload)
       case _   => Right(Packet.Generic(tpe, payload))
     }
   }
@@ -165,6 +275,13 @@ object Packet {
     )
   }
 
+  def simpleQueryMessage(query: String): ByteBuffer =
+    Gen.make(
+      Field.Byte('Q'),
+      Field.Length,
+      Field.String(query)
+    )
+
   extension (bb: ByteBuffer) {
     def getString: Option[String] = {
       val pos = bb.position()
@@ -202,6 +319,11 @@ object Packet {
           None
         }
     }
+
+    def getShortSafe: Option[Short] = Try(bb.getShort).toOption
+    def getIntSafe: Option[Int] = Try(bb.getInt).toOption
+    def getLongSafe: Option[Long] = Try(bb.getLong).toOption
+
   }
 
 }

@@ -15,7 +15,8 @@ trait Protocol {
 object Protocol {
 
   case class Live(outQ: Queue[ByteBuffer]) extends Protocol {
-    override def simpleQuery(query: String): UIO[Unit] = ZIO.unit
+    override def simpleQuery(query: String): UIO[Unit] =
+      outQ.offer(Packet.simpleQueryMessage(query)).unit
   }
 
   def live(outQ: Queue[ByteBuffer], in: ZStream[Any, Connection.Error, Packet]): URIO[Scope, Live] =

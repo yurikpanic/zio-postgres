@@ -11,6 +11,7 @@ object Main extends ZIOAppDefault {
     proto <- conn.init
     res <- proto.simpleQuery("select * from test")
     _ <- Console.printLine(s"Result: $res")
+    _ <- ZIO.sleep(5.seconds)
   } yield ()).provideSome[Scope](
     Connection.live,
     Parser.live,

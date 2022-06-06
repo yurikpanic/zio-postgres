@@ -20,6 +20,7 @@ object Gen {
         case '{ Field.Length }    => acc + 4 -> lExpr
         case '{ Field.Type($_) }  => acc -> lExpr
         case '{ Field.Int32($_) } => acc + 4 -> lExpr
+        case '{ Field.Int16($_) } => acc + 2 -> lExpr
         case '{ Field.Int32s($xs) } =>
           xs.value match {
             case Some(xs) => acc + xs.length * 4 -> lExpr
@@ -64,6 +65,7 @@ object Gen {
             genByteBuffer(tl, symtab, '{ ${ acc }.putInt($length - ${ acc }.position()) }, length)
           case '{ Field.Type($x) }  => genByteBuffer(tl, symtab, '{ ${ acc }.put(${ x }) }, length)
           case '{ Field.Int32($x) } => genByteBuffer(tl, symtab, '{ ${ acc }.putInt(${ x }) }, length)
+          case '{ Field.Int16($x) } => genByteBuffer(tl, symtab, '{ ${ acc }.putShort(${ x }) }, length)
 
           case '{ Field.Int32s($xs) } =>
             val ee = '{
