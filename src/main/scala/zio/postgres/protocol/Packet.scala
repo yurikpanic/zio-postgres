@@ -18,6 +18,7 @@ enum Packet {
   case RowDescription(fields: List[Packet.RowDescription.Field])
   case DataRow(fields: List[Option[Array[Byte]]])
   case Close(kind: Packet.Close.Kind, name: String)
+  case Error(fields: Map[Byte, String])
 }
 
 object Packet {
@@ -222,6 +223,21 @@ object Packet {
     }
   }
 
+  object Error {
+    def parse(payload: Chunk[Byte]): Either[ParseError, Packet] = {
+      val bb = ByteBuffer.wrap(payload.toArray).order(ByteOrder.BIG_ENDIAN)
+
+      def loop(acc: Map[Byte, String]): Either[ParseError, Map[Byte, String]] = {
+        Try(bb.get()).toEither.left.map(_ => ParseError.BufferUnderflow).flatMap { t =>
+          if (t == 0) Right(acc)
+          else bb.getString.toRight(ParseError.BufferUnderflow).flatMap(value => loop(acc + (t -> value)))
+        }
+      }
+
+      loop(Map.empty).map(Error(_))
+    }
+  }
+
   def parse(tpe: Byte, payload: Chunk[Byte]): Either[ParseError, Packet] = {
     tpe match {
       case 'R' => AuthRequest.Kind.parse(payload).map(Packet.AuthRequest(_))
@@ -231,6 +247,7 @@ object Packet {
       case 'T' => RowDescription.parse(payload)
       case 'D' => DataRow.parse(payload)
       case 'C' => Close.parse(payload)
+      case 'E' => Error.parse(payload)
       case _   => Right(Packet.Generic(tpe, payload))
     }
   }
