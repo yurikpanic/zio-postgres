@@ -9,14 +9,14 @@ import connection.*
 import java.nio.ByteBuffer
 
 trait Protocol {
-  // TODO: the result should be something more sophisticated than raw packet
-  def simpleQuery(query: String): ZStream[Any, Protocol.Error, Packet.DataRow]
+  def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A]
 }
 
 object Protocol {
 
   enum Error {
     case Backend(fields: Map[Error.Backend.Type, String])
+    case Decode(error: Decoder.Error)
   }
 
   object Error {
@@ -95,14 +95,17 @@ object Protocol {
     import CmdResp._
     import CmdResp.Cmd._
 
-    override def simpleQuery(query: String): ZStream[Any, Protocol.Error, Packet.DataRow] =
+    override def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A] =
       for {
         respQ <- ZStream.fromZIO(Queue.bounded[Either[Protocol.Error, Packet.DataRow]](10))
         _ <- ZStream.fromZIO(q.offer(Cmd(Kind.SimpleQuery(query, respQ))))
-        res <- ZStream.fromQueue(respQ).flatMap {
+        row <- ZStream.fromQueue(respQ).flatMap {
           case Left(err) => ZStream.fail(err)
           case Right(x)  => ZStream.succeed(x)
         }
+        res <- Decoder[A]
+          .decode(row)
+          .fold(err => ZStream.fail(Protocol.Error.Decode(err)), ZStream.succeed(_))
       } yield res
   }
 
