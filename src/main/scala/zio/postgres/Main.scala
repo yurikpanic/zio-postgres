@@ -11,7 +11,7 @@ object Main extends ZIOAppDefault {
   override def run = (for {
     conn <- ZIO.service[Connection]
     proto <- conn.init
-    res1 <- proto.simpleQuery("select * from test")(textValue ~ textValue).runCollect.either
+    res1 <- proto.simpleQuery("select * from test")(textValue ~ textValue ~ textValue).runCollect.either
     _ <- Console.printLine(s"Result1: $res1")
     res2 <- proto.simpleQuery[Packet.DataRow]("select * fro test").runCollect.either
     _ <- Console.printLine(s"Result2: $res2")

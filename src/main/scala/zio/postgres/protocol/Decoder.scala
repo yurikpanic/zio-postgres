@@ -37,22 +37,36 @@ object Decoder {
 
   val textValue: Field[String] = Field(_.toRight(Error.NullUnexpected).map(new String(_, UTF_8)))
 
-  extension [A](f: Field[A]) {
-    def opt: Field[Option[A]] = Field[Option[A]](f.decode.andThen {
+  extension [A](fd: Field[A]) {
+    def opt: Field[Option[A]] = Field[Option[A]](fd.decode.andThen {
       case Left(Error.NullUnexpected) => Right(None)
       case Right(x)                   => Right(Some(x))
       case x                          => x.map(Some(_))
     })
 
-    def single: Decoder[A] = Decoder(_.fields.headOption.toRight(Error.ResultSetExhausted).flatMap(f.decode _))
+    def single: Decoder[A] = Decoder(_.fields.headOption.toRight(Error.ResultSetExhausted).flatMap(fd.decode _))
 
     def ~[B](that: Field[B]): Decoder[(A, B)] = Decoder(_.fields match {
       case a :: b :: _ =>
         for {
-          a1 <- f.decode(a)
+          a1 <- fd.decode(a)
           b1 <- that.decode(b)
         } yield a1 -> b1
       case _ => Left(Error.ResultSetExhausted)
     })
+  }
+
+  extension [A <: Tuple](d: Decoder[A]) {
+
+    def ~[B](fd: Field[B]): Decoder[Tuple.Concat[A, Tuple1[B]]] = new Decoder {
+
+      override def decode(data: Packet.DataRow): Either[Error, Tuple.Concat[A, Tuple1[B]]] =
+        d.decode(data).flatMap { a =>
+          data.fields.drop(a.size) match {
+            case x :: _ => fd.decode(x).map { b => a ++ Tuple1(b) }
+            case _      => Left(Error.ResultSetExhausted)
+          }
+        }
+    }
   }
 }

@@ -75,11 +75,11 @@ object Protocol {
   object CmdResp {
     object Cmd {
       enum Kind {
-        case SimpleQuery(query: String, q: Queue[Either[Protocol.Error, Packet.DataRow]])
+        case SimpleQuery(query: String, q: Queue[Either[Protocol.Error, Option[Packet.DataRow]]])
       }
 
       extension (k: Kind) {
-        def respQueue: Option[Queue[Either[Protocol.Error, Packet.DataRow]]] = k match {
+        def respQueue: Option[Queue[Either[Protocol.Error, Option[Packet.DataRow]]]] = k match {
           case Kind.SimpleQuery(_, q) => Some(q)
         }
       }
@@ -88,7 +88,7 @@ object Protocol {
 
   enum State {
     case Ready
-    case QueryRespond(respond: Option[Queue[Either[Protocol.Error, Packet.DataRow]]], next: List[CmdResp.Cmd])
+    case QueryRespond(respond: Option[Queue[Either[Protocol.Error, Option[Packet.DataRow]]]], next: List[CmdResp.Cmd])
   }
 
   case class Live(q: Queue[CmdResp.Cmd]) extends Protocol {
@@ -97,12 +97,15 @@ object Protocol {
 
     override def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A] =
       for {
-        respQ <- ZStream.fromZIO(Queue.bounded[Either[Protocol.Error, Packet.DataRow]](10))
+        respQ <- ZStream.fromZIO(Queue.bounded[Either[Protocol.Error, Option[Packet.DataRow]]](10))
         _ <- ZStream.fromZIO(q.offer(Cmd(Kind.SimpleQuery(query, respQ))))
-        row <- ZStream.fromQueue(respQ).flatMap {
-          case Left(err) => ZStream.fail(err)
-          case Right(x)  => ZStream.succeed(x)
-        }
+        row <- ZStream
+          .fromQueueWithShutdown(respQ)
+          .flatMap {
+            case Left(err)      => ZStream.fail(err)
+            case Right(Some(x)) => ZStream.succeed(x)
+            case Right(None)    => ZStream.fromZIO(respQ.shutdown) *> ZStream.empty // this completes the stream
+          }
         res <- Decoder[A]
           .decode(row)
           .fold(err => ZStream.fail(Protocol.Error.Decode(err)), ZStream.succeed(_))
@@ -117,7 +120,10 @@ object Protocol {
     import CmdResp._
     import CmdResp.Cmd._
 
-    def backendError(respQueue: Option[Queue[Either[Protocol.Error, Packet.DataRow]]], fields: Map[Byte, String]) =
+    def backendError(
+        respQueue: Option[Queue[Either[Protocol.Error, Option[Packet.DataRow]]]],
+        fields: Map[Byte, String]
+    ) =
       respQueue.fold(ZIO.unit)(_.offer(Left(Error.Backend(fields.map { (k, v) =>
         Error.Backend.Type(k) -> v
       }))).unit)
@@ -130,11 +136,11 @@ object Protocol {
 
       // send current query result, the state is kept the same
       case (st @ State.QueryRespond(respQueue, _), Resp(dr @ Packet.DataRow(_))) =>
-        respQueue.fold(ZIO.succeed(st))(_.offer(Right(dr)).as(st))
+        respQueue.fold(ZIO.succeed(st))(_.offer(Right(Some(dr))).as(st))
 
-      // query results are over - shutdown the results queue, but keep the state, dropping the queue
+      // query results are over - complete the results queue, but keep the state, dropping the queue
       case (st @ State.QueryRespond(respQueue, next), Resp(Packet.Close(_, _))) =>
-        respQueue.fold(ZIO.succeed(st))(_.shutdown.as(State.QueryRespond(None, next)))
+        respQueue.fold(ZIO.succeed(st))(_.offer(Right(None)).as(State.QueryRespond(None, next)))
 
       // error happend executing previous query, we have no new query to run
       case (State.QueryRespond(respQueue, Nil), Resp(Packet.Error(fields))) =>
