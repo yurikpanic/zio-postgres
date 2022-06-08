@@ -139,7 +139,7 @@ object Protocol {
         respQueue.fold(ZIO.succeed(st))(_.offer(Right(Some(dr))).as(st))
 
       // query results are over - complete the results queue, but keep the state, dropping the queue
-      case (st @ State.QueryRespond(respQueue, next), Resp(Packet.Close(_, _))) =>
+      case (st @ State.QueryRespond(respQueue, next), Resp(Packet.CommandComplete(_))) =>
         respQueue.fold(ZIO.succeed(st))(_.offer(Right(None)).as(State.QueryRespond(None, next)))
 
       // error happend executing previous query, we have no new query to run

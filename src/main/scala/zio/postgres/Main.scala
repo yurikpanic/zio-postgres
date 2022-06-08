@@ -15,6 +15,8 @@ object Main extends ZIOAppDefault {
     _ <- Console.printLine(s"Result1: $res1")
     res2 <- proto.simpleQuery[Packet.DataRow]("select * fro test").runCollect.either
     _ <- Console.printLine(s"Result2: $res2")
+    res3 <- proto.simpleQuery[Packet.DataRow]("insert into test (value, x) values ('zzz', 42)").runCollect.either
+    _ <- Console.printLine(s"Result3: $res3")
   } yield ()).provideSome[Scope](
     Connection.live,
     Parser.live,

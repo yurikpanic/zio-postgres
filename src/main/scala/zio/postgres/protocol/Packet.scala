@@ -17,7 +17,7 @@ enum Packet {
   case ReadyForQuery(status: Packet.ReadyForQuery.TransactionStatus)
   case RowDescription(fields: List[Packet.RowDescription.Field])
   case DataRow(fields: List[Option[Array[Byte]]])
-  case Close(kind: Packet.Close.Kind, name: String)
+  case CommandComplete(tag: String)
   case Error(fields: Map[Byte, String])
 }
 
@@ -204,22 +204,12 @@ object Packet {
 
   }
 
-  object Close {
-    enum Kind {
-      case PreparedStatemen
-      case Portal
-    }
+  object CommandComplete {
 
     def parse(payload: Chunk[Byte]): Either[ParseError, Packet] = {
       val bb = ByteBuffer.wrap(payload.toArray).order(ByteOrder.BIG_ENDIAN)
 
-      (bb.get() match {
-        case 'S' => Right(Kind.PreparedStatemen)
-        case 'P' => Right(Kind.Portal)
-        case x   => Left(ParseError.UnknownCloseKind(x))
-      }).flatMap { kind =>
-        bb.getString.map(Packet.Close(kind, _)).toRight(ParseError.BufferUnderflow)
-      }
+      bb.getString.map(Packet.CommandComplete(_)).toRight(ParseError.BufferUnderflow)
     }
   }
 
@@ -246,7 +236,7 @@ object Packet {
       case 'Z' => ReadyForQuery.parse(payload)
       case 'T' => RowDescription.parse(payload)
       case 'D' => DataRow.parse(payload)
-      case 'C' => Close.parse(payload)
+      case 'C' => CommandComplete.parse(payload)
       case 'E' => Error.parse(payload)
       case _   => Right(Packet.Generic(tpe, payload))
     }
