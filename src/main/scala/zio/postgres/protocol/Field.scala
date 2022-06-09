@@ -1,6 +1,6 @@
 package zio.postgres.protocol
 
-enum Field:
+enum Field {
   case Length
   case Type(value: scala.Byte)
   case Int32(value: Int)
@@ -9,3 +9,4 @@ enum Field:
   case Byte(value: scala.Byte)
   case Bytes(value: Seq[scala.Byte])
   case String(value: java.lang.String)
+}

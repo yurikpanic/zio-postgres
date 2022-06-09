@@ -10,56 +10,16 @@ import scala.quoted.*
 
 object Gen {
 
-  def lengthImpl(fields: Seq[(Expr[Field], Int)], symtab: Map[Int, Expr[Array[Byte]]])(using
-      quotes: Quotes
-  ): Expr[Int] = {
-    import quotes.reflect.report
-
-    val (lStatic, lExpr) = fields.foldLeft(0 -> Expr(0)) { case ((acc, lExpr), (curExpr, idx)) =>
-      curExpr match {
-        case '{ Field.Length }    => acc + 4 -> lExpr
-        case '{ Field.Type($_) }  => acc -> lExpr
-        case '{ Field.Int32($_) } => acc + 4 -> lExpr
-        case '{ Field.Int16($_) } => acc + 2 -> lExpr
-        case '{ Field.Int32s($xs) } =>
-          xs.value match {
-            case Some(xs) => acc + xs.length * 4 -> lExpr
-            case None     => acc -> '{ $lExpr + ${ xs }.length * 4 }
-          }
-        case '{ Field.Byte($_) } => acc + 1 -> lExpr
-        case '{ Field.Bytes($xs) } =>
-          xs.value match {
-            case Some(xs) => acc + xs.length -> lExpr
-            case None     => acc -> '{ $lExpr + ${ xs }.length }
-          }
-        case '{ Field.String($s) } =>
-          s.value match {
-            case Some(x) => acc + x.getBytes(UTF_8).length + 1 -> lExpr
-            case None =>
-              symtab.get(idx) match {
-                case None => report.errorAndAbort(s"Byte representation of string field $idx was not found")
-                case Some(strByteExpr) =>
-                  acc + 1 -> '{ $lExpr + ${ strByteExpr }.length }
-              }
-          }
-      }
-    }
-
-    '{
-      ${ Expr(lStatic) } + $lExpr
-    }
-  }
-
   def genByteBuffer(
-      fields: List[(Expr[Field], Int)],
-      symtab: Map[Int, Expr[Array[Byte]]],
+      fields: List[Expr[Field]],
+      symtab: Map[Expr[Field], Expr[Array[Byte]]],
       acc: Expr[ByteBuffer],
       length: Expr[Int]
   )(using quotes: Quotes): Expr[ByteBuffer] = {
     import quotes.reflect.report
 
     fields match {
-      case (curExpr, idx) :: tl =>
+      case curExpr :: tl =>
         curExpr match {
           case '{ Field.Length } =>
             genByteBuffer(tl, symtab, '{ ${ acc }.putInt($length - ${ acc }.position()) }, length)
@@ -85,8 +45,9 @@ object Gen {
                   length
                 )
               case None =>
-                symtab.get(idx) match {
-                  case None => report.errorAndAbort(s"Byte representation of string field $idx was not found")
+                symtab.get(curExpr) match {
+                  case None =>
+                    report.errorAndAbort(s"Byte representation of string field ${curExpr.show} was not found")
                   case Some(strByteExpr) =>
                     genByteBuffer(tl, symtab, '{ ${ acc }.put(${ strByteExpr }).put(0: Byte) }, length)
                 }
@@ -97,34 +58,51 @@ object Gen {
     }
   }
 
-  def genStrBytes(
-      fields: List[(Expr[Field], Int)],
-      symtab: Map[Int, Expr[Array[Byte]]],
-      allFields: List[(Expr[Field], Int)]
-  )(using quotes: Quotes): Expr[ByteBuffer] = {
-    fields match {
-      case (curExpr, idx) :: tl =>
-        curExpr match {
+  def loop(
+      exprs: List[Expr[Field]],
+      strBytes: Map[Expr[Field], Expr[Array[Byte]]],
+      lStaticAcc: Int,
+      lExprAcc: Expr[Int]
+  )(using quotes: Quotes, ctx: Ctx): Expr[ByteBuffer] = {
+    import quotes.reflect.report
+
+    exprs match {
+      case cur :: tl =>
+        cur match {
+          case '{ Field.Length }    => loop(tl, strBytes, lStaticAcc + 4, lExprAcc)
+          case '{ Field.Type($_) }  => loop(tl, strBytes, lStaticAcc + 1, lExprAcc)
+          case '{ Field.Int32($_) } => loop(tl, strBytes, lStaticAcc + 4, lExprAcc)
+          case '{ Field.Int16($_) } => loop(tl, strBytes, lStaticAcc + 4, lExprAcc)
+
+          case '{ Field.Int32s($xs) } =>
+            xs.value match {
+              case Some(xs) => loop(tl, strBytes, lStaticAcc + xs.length * 4, lExprAcc)
+              case None     => loop(tl, strBytes, lStaticAcc, '{ $lExprAcc + ${ xs }.length * 4 })
+            }
+          case '{ Field.Byte($_) } => loop(tl, strBytes, lStaticAcc + 1, lExprAcc)
+          case '{ Field.Bytes($xs) } =>
+            xs.value match {
+              case Some(xs) => loop(tl, strBytes, lStaticAcc + xs.length, lExprAcc)
+              case None     => loop(tl, strBytes, lStaticAcc, '{ $lExprAcc + ${ xs }.length })
+            }
           case '{ Field.String($s) } =>
             s.value match {
+              case Some(x) => loop(tl, strBytes, lStaticAcc + x.getBytes(UTF_8).length + 1, lExprAcc)
               case None =>
                 '{
                   val x = ${ s }.getBytes(UTF_8)
-                  ${ genStrBytes(tl, symtab + (idx -> 'x), allFields) }
+                  ${ loop(tl, strBytes + (cur -> 'x), lStaticAcc + 1, '{ $lExprAcc + x.length }) }
                 }
-
-              case _ => genStrBytes(tl, symtab, allFields)
             }
-          case _ => genStrBytes(tl, symtab, allFields)
         }
-      case _ =>
+      case Nil =>
         '{
-          val length = ${ lengthImpl(allFields, symtab) }
+          val length = ${ Expr(lStaticAcc) } + $lExprAcc
 
           ${
             genByteBuffer(
-              allFields,
-              symtab,
+              ctx.exprs,
+              strBytes,
               '{
                 ByteBuffer
                   .allocate(length)
@@ -137,12 +115,15 @@ object Gen {
     }
   }
 
+  final case class Ctx(exprs: List[Expr[Field]])
+
   def makeImpl(fields: Expr[Seq[Field]])(using Quotes): Expr[ByteBuffer] = {
     import quotes.reflect.report
+
     fields match {
       case Varargs(fieldExprs) =>
-        val fieldExprsWithIdx = fieldExprs.toList.zipWithIndex
-        genStrBytes(fieldExprsWithIdx, Map.empty, fieldExprsWithIdx)
+        implicit val ctx = Ctx(fieldExprs.toList)
+        loop(ctx.exprs, Map.empty, 0, Expr(0))
 
       case other =>
         report.errorAndAbort("Expected explicit argument. Notation `args: _*` is not supported.", other)
