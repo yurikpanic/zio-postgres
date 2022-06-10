@@ -10,12 +10,12 @@ import java.nio.ByteBuffer
 import protocol._
 
 trait Connection {
-  def init(publication: Option[String]): ZIO[Config & Scope, Connection.Error, Protocol]
+  def init(replication: Option[Packet.ReplicationMode]): ZIO[Config & Scope, Connection.Error, Protocol]
 }
 
 object Connection {
-  def init(publication: Option[String]): ZIO[Config & Scope & Connection, Error, Protocol] =
-    ZIO.serviceWithZIO[Connection](_.init(publication))
+  def init(replication: Option[Packet.ReplicationMode]): ZIO[Config & Scope & Connection, Error, Protocol] =
+    ZIO.serviceWithZIO[Connection](_.init(replication))
 
   enum Error {
     case IO(cause: IOException)
@@ -42,7 +42,7 @@ object Connection {
       case (r @ State.Run(_), _) => ZIO.succeed(r)
     }
 
-    override def init(publication: Option[String]): ZIO[Config & Scope, Error, Protocol] = {
+    override def init(replication: Option[Packet.ReplicationMode]): ZIO[Config & Scope, Error, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
         _ <- ZStream.fromQueue(q).run(socket.sink).mapError(Error.IO(_)).forkScoped
@@ -65,7 +65,7 @@ object Connection {
           .zipParLeft {
             for {
               cfg <- ZIO.service[Config]
-              _ <- q.offer(Packet.startupMessage(user = cfg.user, database = cfg.database))
+              _ <- q.offer(Packet.startupMessage(user = cfg.user, database = cfg.database, replication = replication))
             } yield ()
           }
       } yield res

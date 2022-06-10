@@ -19,6 +19,7 @@ enum Packet {
   case DataRow(fields: List[Option[Array[Byte]]])
   case CommandComplete(tag: String)
   case Error(fields: Map[Byte, String])
+  case CopyBoth(overallFormat: Packet.FieldFormat, columnForamt: List[Packet.FieldFormat])
 }
 
 object Packet {
@@ -28,6 +29,7 @@ object Packet {
     case UnknownAuthRequestKind(code: Int)
     case UnknownTransactionStatus(code: Byte)
     case UnknownCloseKind(code: Byte)
+    case UnknownFormat(code: Short)
   }
 
   object AuthRequest {
@@ -228,6 +230,44 @@ object Packet {
     }
   }
 
+  enum FieldFormat {
+    case Textual
+    case Binary
+  }
+
+  object FieldFormat {
+    def parse(x: Short): Either[ParseError, FieldFormat] = x match {
+      case 0 => Right(Textual)
+      case 1 => Right(Binary)
+      case x => Left(ParseError.UnknownFormat(x))
+    }
+    def parse(b: Byte): Either[ParseError, FieldFormat] = parse(b.toShort)
+  }
+
+  object CopyBoth {
+    def parse(payload: Chunk[Byte]): Either[ParseError, Packet] = {
+      val bb = ByteBuffer.wrap(payload.toArray).order(ByteOrder.BIG_ENDIAN)
+
+      (for {
+        overall <- bb.getByteSafe
+        cnt <- bb.getShortSafe
+        arr = new Array[Byte](cnt)
+        _ <- Try(bb.get(arr)).toOption
+      } yield (overall, arr.toList))
+        .toRight(ParseError.BufferUnderflow)
+        .flatMap { case (overall, cols) =>
+          for {
+            overall <- FieldFormat.parse(overall)
+            cols <- cols.foldRight[Either[ParseError, List[FieldFormat]]](Right(Nil)) { (cur, acc) =>
+              acc.flatMap { acc =>
+                FieldFormat.parse(cur).map(_ :: acc)
+              }
+            }
+          } yield CopyBoth(overall, cols)
+        }
+    }
+  }
+
   def parse(tpe: Byte, payload: Chunk[Byte]): Either[ParseError, Packet] = {
     tpe match {
       case 'R' => AuthRequest.Kind.parse(payload).map(Packet.AuthRequest(_))
@@ -238,6 +278,7 @@ object Packet {
       case 'D' => DataRow.parse(payload)
       case 'C' => CommandComplete.parse(payload)
       case 'E' => Error.parse(payload)
+      case 'W' => CopyBoth.parse(payload)
       case _   => Right(Packet.Generic(tpe, payload))
     }
   }
@@ -343,6 +384,7 @@ object Packet {
     def getShortSafe: Option[Short] = Try(bb.getShort).toOption
     def getIntSafe: Option[Int] = Try(bb.getInt).toOption
     def getLongSafe: Option[Long] = Try(bb.getLong).toOption
+    def getByteSafe: Option[Byte] = Try(bb.get).toOption
 
   }
 
