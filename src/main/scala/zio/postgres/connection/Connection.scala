@@ -10,12 +10,12 @@ import java.nio.ByteBuffer
 import protocol._
 
 trait Connection {
-  def init: ZIO[Config & Scope, Connection.Error, Protocol]
+  def init(publication: Option[String]): ZIO[Config & Scope, Connection.Error, Protocol]
 }
 
 object Connection {
-  def init: ZIO[Config & Scope & Connection, Error, Protocol] =
-    ZIO.serviceWithZIO[Connection](_.init)
+  def init(publication: Option[String]): ZIO[Config & Scope & Connection, Error, Protocol] =
+    ZIO.serviceWithZIO[Connection](_.init(publication))
 
   enum Error {
     case IO(cause: IOException)
@@ -42,7 +42,7 @@ object Connection {
       case (r @ State.Run(_), _) => ZIO.succeed(r)
     }
 
-    override def init: ZIO[Config & Scope, Error, Protocol] = {
+    override def init(publication: Option[String]): ZIO[Config & Scope, Error, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
         _ <- ZStream.fromQueue(q).run(socket.sink).mapError(Error.IO(_)).forkScoped

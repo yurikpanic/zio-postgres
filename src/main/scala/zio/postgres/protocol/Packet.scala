@@ -242,7 +242,17 @@ object Packet {
     }
   }
 
-  def startupMessage(user: String, database: String): ByteBuffer =
+  enum ReplicationMode {
+    case Logical
+    case Physical
+  }
+
+  def startupMessage(user: String, database: String, replication: Option[ReplicationMode] = None): ByteBuffer = {
+    val replStr = replication.fold("false") {
+      case ReplicationMode.Logical  => "database"
+      case ReplicationMode.Physical => "true"
+    }
+
     Gen.make(
       Field.Length,
       Field.Int32(196608),
@@ -252,8 +262,11 @@ object Packet {
       Field.String(database),
       Field.String("application_name"),
       Field.String("zio-postgres"),
+      Field.String("replication"),
+      Field.String(replStr),
       Field.Byte(0) // terminator
     )
+  }
 
   def passwordMessage(password: String): ByteBuffer =
     Gen.make(

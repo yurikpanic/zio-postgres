@@ -10,7 +10,7 @@ object Main extends ZIOAppDefault {
 
   override def run = (for {
     conn <- ZIO.service[Connection]
-    proto <- conn.init
+    proto <- conn.init(None)
     res1 <- proto.simpleQuery("select * from test")(textValue ~ textValue.opt ~ textValue.opt).runCollect.either
     _ <- Console.printLine(s"Result1: $res1")
     res2 <- proto.simpleQuery[Packet.DataRow]("select * fro test").runCollect.either

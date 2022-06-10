@@ -52,6 +52,8 @@ object Gen {
                     genByteBuffer(tl, symtab, '{ ${ acc }.put(${ strByteExpr }).put(0: Byte) }, length)
                 }
             }
+          case expr =>
+            report.errorAndAbort(s"Need a known value of Field", expr)
         }
 
       case Nil => acc
@@ -64,7 +66,7 @@ object Gen {
       lStaticAcc: Int,
       lExprAcc: Expr[Int]
   )(using quotes: Quotes, ctx: Ctx): Expr[ByteBuffer] = {
-    import quotes.reflect.report
+    import quotes.reflect.*
 
     exprs match {
       case cur :: tl =>
@@ -94,6 +96,8 @@ object Gen {
                   ${ loop(tl, strBytes + (cur -> 'x), lStaticAcc + 1, '{ $lExprAcc + x.length }) }
                 }
             }
+          case expr =>
+            report.errorAndAbort(s"Need a known value of Field", expr)
         }
       case Nil =>
         '{

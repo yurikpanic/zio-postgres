@@ -6,12 +6,6 @@ class GenSuite extends munit.FunSuite {
   test("Generate initial mesage from fields") {
     val user = "someuser"
     val database = "somedatabase"
-    val l = database.getBytes().length
-    Gen.make(
-      Field.Byte('p'),
-      Field.Length,
-      Field.Int32(l)
-    )
     assertEquals(
       Chunk.fromByteBuffer(
         Gen
@@ -28,4 +22,19 @@ class GenSuite extends munit.FunSuite {
         116, 97, 98, 97, 115, 101, 0, 115, 111, 109, 101, 100, 97, 116, 97, 98, 97, 115, 101, 0)
     )
   }
+
+  test("Generate a packet with length field being not the first") {
+    val l = 123
+    assertEquals(
+      Chunk.fromByteBuffer(
+        Gen.make(
+          Field.Byte('p'),
+          Field.Length,
+          Field.Int32(l)
+        )
+      ),
+      Chunk[Byte](112, 0, 0, 0, 8, 0, 0, 0, 123)
+    )
+  }
+
 }
