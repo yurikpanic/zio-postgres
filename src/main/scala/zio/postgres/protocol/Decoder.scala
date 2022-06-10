@@ -4,7 +4,8 @@ import java.nio.charset.StandardCharsets.UTF_8
 import scala.util.chaining.*
 
 trait Decoder[A] {
-  def decode(data: Packet.DataRow): Either[Decoder.Error, A]
+  def decode: PartialFunction[Packet, Either[Decoder.Error, A]]
+  def isDone(p: Packet): Boolean
 }
 
 object Decoder {
@@ -17,12 +18,14 @@ object Decoder {
 
   def apply[A: Decoder]: Decoder[A] = summon[Decoder[A]]
 
-  def apply[A](f: Packet.DataRow => Either[Decoder.Error, A]): Decoder[A] = new Decoder[A] {
-    override def decode(data: Packet.DataRow): Either[Error, A] = f(data)
-  }
-
   given Decoder[Packet.DataRow] = new Decoder[Packet.DataRow] {
-    override def decode(data: Packet.DataRow) = Right(data)
+    override def decode = { case dr: Packet.DataRow =>
+      Right(dr)
+    }
+    override def isDone(p: Packet) = p match {
+      case Packet.CommandComplete(_) => true
+      case _                         => false
+    }
   }
 
   trait Field[A] {
@@ -44,29 +47,54 @@ object Decoder {
       case x                          => x.map(Some(_))
     })
 
-    def single: Decoder[A] = Decoder(_.fields.headOption.toRight(Error.ResultSetExhausted).flatMap(fd.decode _))
+    def single(using dr: Decoder[Packet.DataRow]): Decoder[A] = new Decoder {
+      override def isDone(p: Packet): Boolean = dr.isDone(p)
 
-    def ~[B](that: Field[B]): Decoder[(A, B)] = Decoder(_.fields match {
-      case a :: b :: _ =>
-        for {
-          a1 <- fd.decode(a)
-          b1 <- that.decode(b)
-        } yield a1 -> b1
-      case _ => Left(Error.ResultSetExhausted)
-    })
+      override def decode = dr.decode.andThen {
+        case Left(err) => Left(err)
+        case Right(dr) =>
+          dr.fields.headOption.toRight(Error.ResultSetExhausted).flatMap(fd.decode _)
+      }
+    }
+
+    def ~[B](that: Field[B])(using dr: Decoder[Packet.DataRow]): Decoder[(A, B)] = new Decoder[(A, B)] {
+      override def isDone(p: Packet): Boolean = dr.isDone(p)
+
+      override def decode =
+        dr.decode.andThen {
+          case Left(err) => Left(err)
+
+          case Right(dr) =>
+            dr.fields match {
+              case a :: b :: _ =>
+                for {
+                  a <- fd.decode(a)
+                  b <- that.decode(b)
+                } yield a -> b
+              case _ => Left(Error.ResultSetExhausted)
+            }
+        }
+    }
+
   }
 
   extension [A <: Tuple](d: Decoder[A]) {
 
-    def ~[B](fd: Field[B]): Decoder[Tuple.Concat[A, Tuple1[B]]] = new Decoder {
+    def ~[B](fd: Field[B])(using dr: Decoder[Packet.DataRow]): Decoder[Tuple.Concat[A, Tuple1[B]]] = new Decoder {
+      override def isDone(p: Packet) = d.isDone(p)
 
-      override def decode(data: Packet.DataRow): Either[Error, Tuple.Concat[A, Tuple1[B]]] =
-        d.decode(data).flatMap { a =>
-          data.fields.drop(a.size) match {
-            case x :: _ => fd.decode(x).map { b => a ++ Tuple1(b) }
-            case _      => Left(Error.ResultSetExhausted)
+      override def decode = dr.decode.andThen {
+        case Left(err) => Left(err)
+
+        case Right(data) if d.decode.isDefinedAt(data) =>
+          d.decode(data).flatMap { a =>
+            data.fields.drop(a.size) match {
+              case x :: _ => fd.decode(x).map { b => a ++ Tuple1(b) }
+              case _      => Left(Error.ResultSetExhausted)
+            }
           }
-        }
+      }
     }
+
   }
 }
