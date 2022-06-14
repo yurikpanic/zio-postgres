@@ -13,7 +13,10 @@ object Decoder {
   enum Error {
     case ResultSetExhausted
     case NullUnexpected
+    case WalBufferUnderflow
     case UnknownWalMessage(code: Byte)
+    case UnknownLogicalReplicationMessage(code: Byte)
+    case UnknownLogicalReplicationUpdateKind(code: Byte)
     case Unexpected(message: String)
   }
 
