@@ -85,6 +85,7 @@ object Protocol {
       extension (k: Kind) {
         def reply[A]: Option[Reply[A]] = k match {
           case Kind.SimpleQuery(_, reply: Reply[A]) => Some(reply)
+          case _                                    => None
         }
       }
     }
@@ -110,9 +111,6 @@ object Protocol {
             case Right(Some(x)) => ZStream.succeed(x)
             case Right(None)    => ZStream.fromZIO(respQ.shutdown) *> ZStream.empty // this completes the stream
           }
-        // res <- Decoder[A]
-        // .decode(row)
-        // .fold(err => ZStream.fail(Protocol.Error.Decode(err)), ZStream.succeed(_))
       } yield res
   }
 

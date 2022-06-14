@@ -20,6 +20,7 @@ enum Packet {
   case CommandComplete(tag: String)
   case Error(fields: Map[Byte, String])
   case CopyBoth(overallFormat: Packet.FieldFormat, columnForamt: List[Packet.FieldFormat])
+  case CopyData(data: Array[Byte])
 }
 
 object Packet {
@@ -268,6 +269,13 @@ object Packet {
     }
   }
 
+  object CopyData {
+
+    def parse(payload: Chunk[Byte]): Either[ParseError, Packet] =
+      Right(Packet.CopyData(payload.toArray))
+
+  }
+
   def parse(tpe: Byte, payload: Chunk[Byte]): Either[ParseError, Packet] = {
     tpe match {
       case 'R' => AuthRequest.Kind.parse(payload).map(Packet.AuthRequest(_))
@@ -279,6 +287,7 @@ object Packet {
       case 'C' => CommandComplete.parse(payload)
       case 'E' => Error.parse(payload)
       case 'W' => CopyBoth.parse(payload)
+      case 'd' => CopyData.parse(payload)
       case _   => Right(Packet.Generic(tpe, payload))
     }
   }

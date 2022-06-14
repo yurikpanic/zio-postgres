@@ -21,9 +21,12 @@ object Main extends ZIOAppDefault {
 
     proto <- conn.init(Some(Packet.ReplicationMode.Logical))
     res <- proto
-      .simpleQuery(
+      .simpleQuery[Wal.Message](
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '2', publication_names '"testpub"')"""
       )
+      .tap { x =>
+        Console.printLine(s"WAL data: $x")
+      }
       .runCollect
     _ <- Console.printLine(s"Result: $res")
     _ <- ZIO.sleep(10.seconds).forever
