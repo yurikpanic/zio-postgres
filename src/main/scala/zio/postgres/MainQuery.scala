@@ -1,0 +1,33 @@
+package zio.postgres
+
+import zio.*
+
+import java.time.Instant
+
+import connection.*
+import protocol.*
+
+object MainQuery extends ZIOAppDefault {
+  import Decoder.*
+
+  override def run = (for {
+    conn <- ZIO.service[Connection]
+
+    proto <- conn.init(None)
+    res1 <- proto.simpleQuery("select * from test")(textValue ~ textValue.opt ~ textValue.opt).runCollect.either
+    _ <- Console.printLine(s"Result1: $res1")
+    res2 <- proto.simpleQuery[Packet.DataRow]("select * fro test").runCollect.either
+    _ <- Console.printLine(s"Result2: $res2")
+    res3 <- proto.simpleQuery[Packet.DataRow]("insert into test (value, x) values ('zzz', 42)").runCollect.either
+    _ <- Console.printLine(s"Result3: $res3")
+
+  } yield ()).provideSome[Scope](
+    Connection.live,
+    Parser.live,
+    Auth.live,
+    Socket.tcp,
+    ZLayer.succeed(
+      Config(host = "localhost", port = 5432, database = "test", user = "test", password = "test")
+    )
+  )
+}
