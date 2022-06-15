@@ -26,6 +26,7 @@ object Gen {
           case '{ Field.Type($x) }  => genByteBuffer(tl, symtab, '{ ${ acc }.put(${ x }) }, length)
           case '{ Field.Int32($x) } => genByteBuffer(tl, symtab, '{ ${ acc }.putInt(${ x }) }, length)
           case '{ Field.Int16($x) } => genByteBuffer(tl, symtab, '{ ${ acc }.putShort(${ x }) }, length)
+          case '{ Field.Int64($x) } => genByteBuffer(tl, symtab, '{ ${ acc }.putLong(${ x }) }, length)
 
           case '{ Field.Int32s($xs) } =>
             val ee = '{
@@ -75,6 +76,7 @@ object Gen {
           case '{ Field.Type($_) }  => loop(tl, strBytes, lStaticAcc + 1, lExprAcc)
           case '{ Field.Int32($_) } => loop(tl, strBytes, lStaticAcc + 4, lExprAcc)
           case '{ Field.Int16($_) } => loop(tl, strBytes, lStaticAcc + 4, lExprAcc)
+          case '{ Field.Int64($_) } => loop(tl, strBytes, lStaticAcc + 8, lExprAcc)
 
           case '{ Field.Int32s($xs) } =>
             xs.value match {

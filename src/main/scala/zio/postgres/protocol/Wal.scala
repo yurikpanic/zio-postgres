@@ -212,6 +212,10 @@ object Wal {
             typMod <- bb.getIntSafe
           } yield Column(flags, name, dtId, typMod)
         }.toRight(Decoder.Error.WalBufferUnderflow)
+
+        extension (c: Column) {
+          def isKey: Boolean = (c.flags & 1) != 0
+        }
       }
 
       def parse(bb: ByteBuffer): Either[Decoder.Error, LogicalReplication] = {
@@ -359,5 +363,27 @@ object Wal {
 
     // TODO: perhaps we should terminate on some errors and maybe some other conditions?
     override def isDone(p: Packet): Boolean = false
+  }
+
+  def standbyStatusUpdate(
+      walWritten: Long,
+      walFlushed: Long,
+      walApplied: Long,
+      clock: Long,
+      replyNow: Boolean = false
+  ): Array[Byte] = {
+    val _replyNow: Byte = if (replyNow) 1 else 0
+    val bb = Gen.make(
+      Field.Byte('r'),
+      Field.Int64(walWritten),
+      Field.Int64(walFlushed),
+      Field.Int64(walApplied),
+      Field.Int64(clock),
+      Field.Byte(_replyNow)
+    )
+
+    val arr = new Array[Byte](bb.limit() - bb.position())
+    bb.get(arr)
+    arr
   }
 }

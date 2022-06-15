@@ -6,6 +6,7 @@ enum Field {
   case Int32(value: Int)
   case Int32s(value: Seq[Int])
   case Int16(value: Short)
+  case Int64(value: Long)
   case Byte(value: scala.Byte)
   case Bytes(value: Seq[scala.Byte])
   case String(value: java.lang.String)

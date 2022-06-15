@@ -2,6 +2,8 @@ package zio.postgres
 
 import zio.*
 
+import java.time.Instant
+
 import connection.*
 import protocol.*
 
@@ -26,6 +28,11 @@ object Main extends ZIOAppDefault {
       )
       .tap { x =>
         Console.printLine(s"WAL data: $x")
+      }
+      .tap {
+        case Wal.Message.PrimaryKeepAlive(walEnd, _, _) =>
+          proto.standbyStatusUpdate(walEnd, walEnd, walEnd, Instant.now())
+        case _ => ZIO.unit
       }
       .runCollect
     _ <- Console.printLine(s"Result: $res")

@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import scala.util.Try
 import scala.util.chaining.*
 import scala.util.control.NonFatal
+import scala.collection.immutable.ArraySeq
 
 enum Packet {
   case Generic(`type`: Byte, payload: Chunk[Byte])
@@ -332,7 +333,7 @@ object Packet {
       Field.Length,
       Field.String(mechanism),
       Field.Int32(_message.length),
-      Field.Bytes(_message.toIndexedSeq)
+      Field.Bytes(ArraySeq.unsafeWrapArray(_message))
     )
   }
 
@@ -341,7 +342,7 @@ object Packet {
     Gen.make(
       Field.Byte('p'),
       Field.Length,
-      Field.Bytes(_message.toIndexedSeq)
+      Field.Bytes(ArraySeq.unsafeWrapArray(_message))
     )
   }
 
@@ -350,6 +351,13 @@ object Packet {
       Field.Byte('Q'),
       Field.Length,
       Field.String(query)
+    )
+
+  def copyDataMessage(data: Array[Byte]): ByteBuffer =
+    Gen.make(
+      Field.Byte('d'),
+      Field.Length,
+      Field.Bytes(ArraySeq.unsafeWrapArray(data))
     )
 
   extension (bb: ByteBuffer) {

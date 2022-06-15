@@ -4,12 +4,21 @@ package protocol
 import zio.*
 import zio.stream.*
 
-import connection.*
-
 import java.nio.ByteBuffer
+import java.time.Instant
+
+import connection.*
+import java.time.temporal.ChronoUnit
 
 trait Protocol {
   def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A]
+  def standbyStatusUpdate(
+      walWritten: Long,
+      walFlushed: Long,
+      walApplied: Long,
+      clock: Instant,
+      replyNow: Boolean = false
+  ): UIO[Unit]
 }
 
 object Protocol {
@@ -80,6 +89,7 @@ object Protocol {
 
       enum Kind {
         case SimpleQuery[A](query: String, reply: Reply[A])
+        case CopyData(data: Array[Byte])
       }
 
       extension (k: Kind) {
@@ -95,6 +105,8 @@ object Protocol {
     case Ready
     case QueryRespond[A](respond: Option[CmdResp.Cmd.Reply[A]], next: List[CmdResp.Cmd])
   }
+
+  val pgEpoch = Instant.parse("2000-01-01T00:00:00Z")
 
   case class Live(q: Queue[CmdResp.Cmd]) extends Protocol {
     import CmdResp._
@@ -112,10 +124,33 @@ object Protocol {
             case Right(None)    => ZStream.fromZIO(respQ.shutdown) *> ZStream.empty // this completes the stream
           }
       } yield res
+
+    override def standbyStatusUpdate(
+        walWritten: Long,
+        walFlushed: Long,
+        walApplied: Long,
+        clock: Instant,
+        replyNow: Boolean = false
+    ): UIO[Unit] = q
+      .offer(
+        Cmd(
+          Kind.CopyData(
+            Wal.standbyStatusUpdate(
+              walWritten,
+              walFlushed,
+              walApplied,
+              ChronoUnit.MICROS.between(pgEpoch, clock),
+              replyNow
+            )
+          )
+        )
+      )
+      .unit
   }
 
   def sendCommand(outQ: Queue[ByteBuffer], kind: CmdResp.Cmd.Kind): UIO[Unit] = kind match {
     case CmdResp.Cmd.Kind.SimpleQuery(query, _) => outQ.offer(Packet.simpleQueryMessage(query)).unit
+    case CmdResp.Cmd.Kind.CopyData(data)        => outQ.offer(Packet.copyDataMessage(data)).unit
   }
 
   def handleProto(outQ: Queue[ByteBuffer]): (State, CmdResp) => UIO[State] = {
@@ -131,6 +166,9 @@ object Protocol {
       }))).unit)
 
     {
+      // TODO: perhaps we need to limit the state where we can send copy data.
+      case (state, Cmd(kind @ Kind.CopyData(_))) => sendCommand(outQ, kind).as(state)
+
       // we are idle and got a new query to run
       case (State.Ready, cmd @ Cmd(kind)) => sendCommand(outQ, kind).as(State.QueryRespond(kind.reply, Nil))
       // we are reading the results for the previous query, but got a new to run - store it in the state
