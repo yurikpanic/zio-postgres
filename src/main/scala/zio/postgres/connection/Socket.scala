@@ -10,8 +10,8 @@ import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 
 trait Socket {
-  def connect: ZIO[
-    Scope & Config,
+  def connect(host: String, port: Int): ZIO[
+    Scope,
     IOException,
     (
         ZSink[Any, IOException, ByteBuffer, ByteBuffer, Unit],
@@ -22,26 +22,25 @@ trait Socket {
 
 object Socket {
 
-  val connect: ZIO[
-    Scope & Config & Socket,
+  def connect(host: String, port: Int): ZIO[
+    Scope & Socket,
     IOException,
     (
         ZSink[Any, IOException, ByteBuffer, ByteBuffer, Unit],
         ZStream[Any, IOException, Byte]
     )
-  ] = ZIO.serviceWithZIO[Socket](_.connect)
+  ] = ZIO.serviceWithZIO[Socket](_.connect(host, port))
 
   object Tcp extends Socket {
-    override def connect: ZIO[
-      Scope & Config,
+    override def connect(host: String, port: Int): ZIO[
+      Scope,
       IOException,
       (ZSink[Any, IOException, ByteBuffer, ByteBuffer, Unit], ZStream[Any, IOException, Byte])
     ] = for {
-      cfg <- ZIO.service[Config]
       channel <- ZIO
         .fromAutoCloseable(
           ZIO.attemptBlockingIO(
-            SocketChannel.open(new InetSocketAddress(cfg.host, cfg.port))
+            SocketChannel.open(new InetSocketAddress(host, port))
           )
         )
       sink: ZSink[Any, IOException, ByteBuffer, ByteBuffer, Unit] = ZSink.fromPush(ZIO.succeed {

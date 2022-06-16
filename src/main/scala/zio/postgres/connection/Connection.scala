@@ -45,7 +45,8 @@ object Connection {
     override def init(replication: Option[Packet.ReplicationMode]): ZIO[Config & Scope, Error, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
-        conn <- socket.connect.mapError(Error.IO(_))
+        cfg <- ZIO.service[Config]
+        conn <- socket.connect(cfg.host, cfg.port).mapError(Error.IO(_))
         _ <- ZStream.fromQueue(q).run(conn._1).mapError(Error.IO(_)).forkScoped
         packets <- conn._2
           .mapError(Error.IO(_))
