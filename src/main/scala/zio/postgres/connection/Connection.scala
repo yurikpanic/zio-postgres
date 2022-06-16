@@ -45,8 +45,9 @@ object Connection {
     override def init(replication: Option[Packet.ReplicationMode]): ZIO[Config & Scope, Error, Protocol] = {
       val prog = for {
         q <- Queue.unbounded[ByteBuffer]
-        _ <- ZStream.fromQueue(q).run(socket.sink).mapError(Error.IO(_)).forkScoped
-        packets <- socket.stream
+        conn <- socket.connect.mapError(Error.IO(_))
+        _ <- ZStream.fromQueue(q).run(conn._1).mapError(Error.IO(_)).forkScoped
+        packets <- conn._2
           .mapError(Error.IO(_))
           .via(new ZPipeline(Parser.pipeline.channel.mapError(Error.Parse(_))))
           .debug("packet")

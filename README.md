@@ -21,16 +21,14 @@ To stream the changes from the database table:
 3. Get the ZStream of changes in the scala application via `Protocol#simpleQuery`.
 4. "Commit" the wal offset to the database while consuming the messages via `Protocol#standbyStatusUpdate`. If `Wal.Message.PrimaryKeepAlive` would not be replied by Standby Status Update messages - the server would terminate the connection.
 
-A complete example can be found in [MainStream.scala](src/main/scala/zio/postgres/MainStream.scala).
-
-An example for running simple queries is in [MainQuery.scala](src/main/scala/zio/postgres/MainQuery.scala) file.
+A complete example can be found in [Main.scala](src/main/scala/zio/postgres/example/Main.scala).
 
 A prerequisite to run the example Main files above are:
 - `test` database
 - owned by user `test` with password `test`
-- with `test` table (`create table test(id serial primary key, value text, x integer);`)
-- a publication `testpub` for the table (`create publication testpub for table test;`)
-- a replication slot `testsub` (`select * from pg_create_logical_replication_slot('testsub', 'pgoutput');`)
+- `sbt "runMain zio.postgres.example.Main --init"` - this creates a table, publication and replication slot
+
+After this you can run `sbt "runMain zio.postgres.example.Main"` - to see that the in-application state (a Map) is updated from the `test` table data changes, that are performed in parallel.
 
 ## Related PostgreSQL documentation
 
