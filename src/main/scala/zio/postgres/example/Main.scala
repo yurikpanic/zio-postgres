@@ -8,6 +8,7 @@ import java.time.Instant
 
 import connection.*
 import protocol.*
+import zio.postgres.protocol.Wal.LogicalReplication.CDecoder
 
 object Main extends ZIOAppDefault {
   import Decoder.*
@@ -23,27 +24,13 @@ object Main extends ZIOAppDefault {
     _ <- Console.printLine(s"Replication slot created: $slot")
   } yield ()
 
-  def stateEntry(id: String, value: LogicalReplication.Column, x: LogicalReplication.Column) = {
-    val _id = id.toInt
-    val _value = value match {
-      case LogicalReplication.Column.Text(x) => Some(x)
-      case _                                 => None
-    }
-    val _x = x match {
-      case LogicalReplication.Column.Text(x) => Some(x.toInt)
-      case _                                 => None
-    }
-
-    _id -> (_value -> _x)
-  }
-
   val stream = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(Some(Packet.ReplicationMode.Logical))
     res <- proto
-      .simpleQuery[Wal.Message](
+      .simpleQuery(
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '2', publication_names '"testpub"')"""
-      )
+      )(Wal.messageDecoder((CDecoder.int ~ CDecoder.textValue.opt ~ CDecoder.int.opt)))
       .tap { x =>
         Console.printLine(s"WAL data: $x")
       }
@@ -59,10 +46,10 @@ object Main extends ZIOAppDefault {
                 _,
                 _,
                 _,
-                LogicalReplication.Insert(_, LogicalReplication.Column.Text(id) :: value :: x :: _)
+                LogicalReplication.Insert(_, (id, value, x))
               )
             ) =>
-          val state = acc + stateEntry(id, value, x)
+          val state = acc + (id -> (value -> x))
           Console.printLine(s"State: $state").as(state -> state)
 
         // This handles only updates that does not touch the key data
@@ -72,10 +59,10 @@ object Main extends ZIOAppDefault {
                 _,
                 _,
                 _,
-                LogicalReplication.Update(_, None, LogicalReplication.Column.Text(id) :: value :: x :: _)
+                LogicalReplication.Update(_, None, (id, value, x))
               )
             ) =>
-          val state = acc + stateEntry(id, value, x)
+          val state = acc + (id -> (value -> x))
           Console.printLine(s"State: $state").as(state -> state)
 
         case (acc, message) =>
@@ -100,7 +87,10 @@ object Main extends ZIOAppDefault {
       args <- getArgs
       _ <- {
         if (args.contains("--init")) init
-        else stream zipPar queries
+        else {
+          if (args.contains("--just-stream")) stream
+          else stream zipPar queries
+        }
       }
     } yield ()
   }.provideSome[Scope & ZIOAppArgs](
