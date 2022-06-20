@@ -8,7 +8,10 @@ import zio.postgres.protocol.Wal.LogicalReplication.CDecoder
 import java.time.Instant
 
 import connection.*
-import protocol.*
+import decoder.Field
+import protocol.Packet
+import protocol.Parser
+import protocol.Wal
 
 object Main extends ZIOAppDefault {
   import decoder.Decoder.*
@@ -19,7 +22,9 @@ object Main extends ZIOAppDefault {
     _ <- proto.simpleQuery("create table test(id integer primary key, value text, x integer)").runCollect
     _ <- proto.simpleQuery("create publication testpub for table test").runCollect
     slot <- proto
-      .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(textValue ~ textValue)
+      .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(
+        Field.textValue ~ Field.textValue
+      )
       .runCollect
     _ <- Console.printLine(s"Replication slot created: $slot")
   } yield ()

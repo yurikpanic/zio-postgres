@@ -8,8 +8,8 @@ import java.nio.ByteBuffer
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
-import decoder.*
 import connection.*
+import decoder.Decoder
 
 trait Protocol {
   def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A]
@@ -26,7 +26,7 @@ object Protocol {
 
   enum Error {
     case Backend(fields: Map[Error.Backend.Type, String])
-    case Decode(error: Decoder.Error)
+    case Decode(error: decoder.Error)
   }
 
   object Error {
