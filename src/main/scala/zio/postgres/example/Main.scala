@@ -23,7 +23,7 @@ object Main extends ZIOAppDefault {
     _ <- proto.simpleQuery("create publication testpub for table test").runCollect
     slot <- proto
       .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(
-        Field.textValue ~ Field.textValue
+        using Field.textValue ~ Field.textValue
       )
       .runCollect
     _ <- Console.printLine(s"Replication slot created: $slot")
@@ -35,7 +35,7 @@ object Main extends ZIOAppDefault {
     res <- proto
       .simpleQuery(
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '2', publication_names '"testpub"')"""
-      )(Wal.messageDecoder((CDecoder.int ~ CDecoder.textValue.opt ~ CDecoder.int.opt)))
+      )(using Wal.messageDecoder(CDecoder.int ~ CDecoder.textValue.opt ~ CDecoder.int.opt))
       .tap { x =>
         Console.printLine(s"WAL data: $x")
       }

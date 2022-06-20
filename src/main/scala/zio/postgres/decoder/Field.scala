@@ -1,56 +1,83 @@
 package zio.postgres
 package decoder
 
+import zio.postgres.protocol.Packet.FieldFormat
+
 import java.nio.charset.StandardCharsets.UTF_8
 
 import protocol.Packet
 
 trait Field[A] {
-  def decode(data: Option[Array[Byte]]): Either[Error, A]
+  def sDecode(data: Option[String]): Either[Error, A]
+  def bDecode(data: Option[Array[Byte]]): Either[Error, A]
+
+  def decode(data: Option[Array[Byte]], format: FieldFormat): Either[Error, A] =
+    format match {
+      case FieldFormat.Textual => sDecode(data.map(new String(_, UTF_8)))
+      case FieldFormat.Binary  => bDecode(data)
+    }
 }
 
 object Field {
-  def apply[A](f: Option[Array[Byte]] => Either[Error, A]): Field[A] = new Field[A] {
-    override def decode(data: Option[Array[Byte]]): Either[Error, A] = f(data)
+
+  val textValue: Field[String] = new Field {
+    override def sDecode(data: Option[String]): Either[Error, String] = data.toRight(Error.NullUnexpected)
+    override def bDecode(data: Option[Array[Byte]]): Either[Error, String] = data
+      .toRight(Error.NullUnexpected)
+      .map(new String(_, UTF_8))
   }
 
-  val textValue: Field[String] = Field(_.toRight(Error.NullUnexpected).map(new String(_, UTF_8)))
+  def makeOpt[A]: Either[Error, A] => Either[Error, Option[A]] = {
+    case Left(Error.NullUnexpected) => Right(None)
+    case Right(x)                   => Right(Some(x))
+    case Left(err)                  => Left(err)
+  }
 
   extension [A](fd: Field[A]) {
-    def opt: Field[Option[A]] = Field[Option[A]](fd.decode.andThen {
-      case Left(Error.NullUnexpected) => Right(None)
-      case Right(x)                   => Right(Some(x))
-      case x                          => x.map(Some(_))
-    })
-
-    def single(using dr: Decoder[Packet.DataRow]): Decoder[A] = new Decoder {
-      override def isDone(p: Packet): Boolean = dr.isDone(p)
-
-      override def decode = dr.decode.andThen {
-        case Left(err) => Left(err)
-        case Right(dr) =>
-          dr.fields.headOption.toRight(Error.ResultSetExhausted).flatMap(fd.decode _)
-      }
+    def opt: Field[Option[A]] = new Field {
+      override def bDecode(data: Option[Array[Byte]]): Either[Error, Option[A]] = (fd.bDecode _).andThen(makeOpt)(data)
+      override def sDecode(data: Option[String]): Either[Error, Option[A]] = (fd.sDecode _).andThen(makeOpt)(data)
     }
 
-    def ~[B](that: Field[B])(using dr: Decoder[Packet.DataRow]): Decoder[(A, B)] = new Decoder[(A, B)] {
-      override def isDone(p: Packet): Boolean = dr.isDone(p)
+    def single(using dr: Decoder[Packet.RowDescription, Packet.DataRow]): Decoder[Packet.RowDescription, A] =
+      new Decoder {
+        override def isDone(p: Packet): Boolean = dr.isDone(p)
 
-      override def decode =
-        dr.decode.andThen {
+        override def decode = dr.decode.andThen {
           case Left(err) => Left(err)
-
-          case Right(dr) =>
-            dr.fields match {
-              case a :: b :: _ =>
-                for {
-                  a <- fd.decode(a)
-                  b <- that.decode(b)
-                } yield a -> b
-              case _ => Left(Error.ResultSetExhausted)
-            }
+          case Right(s @ Some(rd), Some(dr)) =>
+            (dr.fields.headOption zip rd.fields.headOption.map(_.format))
+              .toRight(Error.ResultSetExhausted)
+              .flatMap((fd.decode _).tupled)
+              .map(x => s -> Some(x))
+          case Right(None, _) => Left(Error.NoRowDescription)
         }
-    }
+      }
+
+    def ~[B](
+        that: Field[B]
+    )(using dr: Decoder[Packet.RowDescription, Packet.DataRow]): Decoder[Packet.RowDescription, (A, B)] =
+      new Decoder[Packet.RowDescription, (A, B)] {
+        override def isDone(p: Packet): Boolean = dr.isDone(p)
+
+        override def decode =
+          dr.decode.andThen {
+            case Left(err) => Left(err)
+
+            case Right(s @ Some(rd), Some(dr)) =>
+              dr.fields zip rd.fields match {
+                case (a, af) :: (b, bf) :: _ =>
+                  for {
+                    a <- fd.decode(a, af.format)
+                    b <- that.decode(b, bf.format)
+                  } yield s -> Some(a -> b)
+
+                case _ => Left(Error.ResultSetExhausted)
+              }
+
+            case Right(None, _) => Left(Error.NoRowDescription)
+          }
+      }
 
   }
 }

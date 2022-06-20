@@ -126,6 +126,7 @@ object Packet {
   }
 
   object RowDescription {
+
     final case class Field(
         name: String,
         colOid: Int,
@@ -133,7 +134,7 @@ object Packet {
         typeOid: Int,
         typeSize: Short,
         typeModifier: Int,
-        format: Short
+        format: FieldFormat
     )
 
     object Field {
@@ -146,7 +147,7 @@ object Packet {
           typeSize <- bb.getShortSafe
           typeModifier <- bb.getIntSafe
           format <- bb.getShortSafe
-        } yield Field(
+        } yield (
           name,
           colOid,
           colNum,
@@ -157,6 +158,9 @@ object Packet {
         )
       }
         .toRight(ParseError.BufferUnderflow)
+        .flatMap { case (name, colOid, colNum, typeOid, typeSize, typeModifier, format) =>
+          FieldFormat.parse(format).map(Field(name, colOid, colNum, typeOid, typeSize, typeModifier, _))
+        }
 
     }
 

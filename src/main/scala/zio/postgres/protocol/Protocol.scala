@@ -12,7 +12,7 @@ import connection.*
 import decoder.Decoder
 
 trait Protocol {
-  def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A]
+  def simpleQuery[S, A](query: String)(using Decoder[S, A]): ZStream[Any, Protocol.Error, A]
   def standbyStatusUpdate(
       walWritten: Long,
       walFlushed: Long,
@@ -86,17 +86,17 @@ object Protocol {
 
     object Cmd {
 
-      final case class Reply[A](q: Queue[Either[Protocol.Error, Option[A]]], decoder: Decoder[A])
+      final case class Reply[S, A](q: Queue[Either[Protocol.Error, Option[A]]], decoder: Decoder[S, A])
 
       enum Kind {
-        case SimpleQuery[A](query: String, reply: Reply[A])
+        case SimpleQuery[S, A](query: String, reply: Reply[S, A])
         case CopyData(data: Array[Byte])
       }
 
       extension (k: Kind) {
-        def reply[A]: Option[Reply[A]] = k match {
-          case Kind.SimpleQuery(_, reply: Reply[A]) => Some(reply)
-          case _                                    => None
+        def reply[S, A]: Option[Reply[S, A]] = k match {
+          case Kind.SimpleQuery(_, reply: Reply[S, A]) => Some(reply)
+          case _                                       => None
         }
       }
     }
@@ -104,7 +104,7 @@ object Protocol {
 
   enum State {
     case Ready
-    case QueryRespond[S, A](respond: Option[CmdResp.Cmd.Reply[A]], state: Option[S], next: List[CmdResp.Cmd])
+    case QueryRespond[S, A](respond: Option[CmdResp.Cmd.Reply[S, A]], state: Option[S], next: List[CmdResp.Cmd])
   }
 
   val pgEpoch = Instant.parse("2000-01-01T00:00:00Z")
@@ -113,10 +113,10 @@ object Protocol {
     import CmdResp._
     import CmdResp.Cmd._
 
-    override def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A] =
+    override def simpleQuery[S, A](query: String)(using Decoder[S, A]): ZStream[Any, Protocol.Error, A] =
       for {
         respQ <- ZStream.fromZIO(Queue.bounded[Either[Protocol.Error, Option[A]]](10))
-        _ <- ZStream.fromZIO(q.offer(Cmd(Kind.SimpleQuery(query, Reply(respQ, summon[Decoder[A]])))))
+        _ <- ZStream.fromZIO(q.offer(Cmd(Kind.SimpleQuery(query, Reply(respQ, summon[Decoder[S, A]])))))
         res <- ZStream
           .fromQueueWithShutdown(respQ)
           .flatMap {
@@ -177,8 +177,13 @@ object Protocol {
         ZIO.succeed(State.QueryRespond(rq, s, next ::: (cmd :: Nil)))
 
       // send current query result, the state is kept the same
-      case (st @ State.QueryRespond(Some(reply), _, _), Resp(packet)) if reply.decoder.decode.isDefinedAt(packet) =>
-        reply.q.offer(reply.decoder.decode(packet).left.map(Error.Decode(_)).map(Some(_))).as(st)
+      case (st @ State.QueryRespond(Some(reply), s, next), Resp(packet))
+          if reply.decoder.decode.isDefinedAt(s -> packet) =>
+        reply.decoder.decode(s -> packet).left.map(Error.Decode(_)) match {
+          case Left(err)             => reply.q.offer(Left(err)).as(st)
+          case Right(s, a @ Some(_)) => reply.q.offer(Right(a)).as(st.copy(state = s))
+          case Right(s, None)        => ZIO.succeed(st.copy(state = s))
+        }
 
       // query results are over - complete the results queue, but keep the state, dropping the queue
       case (st @ State.QueryRespond(Some(reply), _, next), Resp(packet)) if reply.decoder.isDone(packet) =>

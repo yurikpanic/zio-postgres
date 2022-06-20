@@ -9,6 +9,7 @@ import scala.util.Try
 
 import Wal.LogicalReplication.TupleData.TDecoder
 import decoder.Decoder
+import zio.postgres
 
 object Wal {
   enum Message[A] {
@@ -438,10 +439,10 @@ object Wal {
     }
   }
 
-  given messageDecoder[A: TDecoder]: Decoder[Message[A]] =
-    new Decoder[Message[A]] {
-      override def decode: PartialFunction[Packet, Either[decoder.Error, Message[A]]] = { case Packet.CopyData(data) =>
-        Message.parse(data)
+  given messageDecoder[A: TDecoder]: Decoder[_, Message[A]] =
+    new Decoder[_, Message[A]] {
+      override def decode = { case (s, Packet.CopyData(data)) =>
+        Message.parse(data).map(x => s -> Some(x))
       }
 
       // TODO: perhaps we should terminate on some errors and maybe some other conditions?

@@ -6,18 +6,16 @@ import scala.util.chaining.*
 
 import protocol.*
 
-trait Decoder[A] {
-  def decode: PartialFunction[Packet, Either[Error, A]]
+trait Decoder[S, A] {
+  def decode: PartialFunction[(Option[S], Packet), Either[Error, (Option[S], Option[A])]]
   def isDone(p: Packet): Boolean
 }
 
 object Decoder {
 
-  def apply[A: Decoder]: Decoder[A] = summon[Decoder[A]]
-
-  given Decoder[Packet.DataRow] = new Decoder[Packet.DataRow] {
-    override def decode = { case dr: Packet.DataRow =>
-      Right(dr)
+  given Decoder[Packet.RowDescription, Packet.DataRow] = new Decoder[Packet.RowDescription, Packet.DataRow] {
+    override def decode = { case (s, dr: Packet.DataRow) =>
+      Right(s -> Some(dr))
     }
     override def isDone(p: Packet) = p match {
       case Packet.CommandComplete(_) => true
@@ -29,21 +27,27 @@ object Decoder {
     def decode(data: Option[Array[Byte]]): Either[Error, A]
   }
 
-  extension [A <: Tuple](d: Decoder[A]) {
+  extension [S, A <: Tuple](d: Decoder[S, A]) {
 
-    def ~[B](fd: Field[B])(using dr: Decoder[Packet.DataRow]): Decoder[Tuple.Concat[A, Tuple1[B]]] = new Decoder {
+    def ~[B](fd: Field[B])(using dr: Decoder[S, Packet.DataRow]): Decoder[S, Tuple.Concat[A, Tuple1[B]]] = new Decoder {
       override def isDone(p: Packet) = d.isDone(p)
 
       override def decode = dr.decode.andThen {
         case Left(err) => Left(err)
 
-        case Right(data) if d.decode.isDefinedAt(data) =>
-          d.decode(data).flatMap { a =>
-            data.fields.drop(a.size) match {
-              case x :: _ => fd.decode(x).map { b => a ++ Tuple1(b) }
-              case _      => Left(Error.ResultSetExhausted)
-            }
+        case Right(s, Some(data)) if d.decode.isDefinedAt(s -> data) =>
+          d.decode(s -> data).flatMap {
+            case (s, Some(a)) =>
+              data.fields.drop(a.size) match {
+                case x :: _ => fd.decode(x).map { b => s -> Some(a ++ Tuple1(b)) }
+                case _      => Left(Error.ResultSetExhausted)
+              }
+
+            case (s, None) =>
+              Right(s -> None)
           }
+
+        case Right(s, None) => Right(s -> None)
       }
     }
 
