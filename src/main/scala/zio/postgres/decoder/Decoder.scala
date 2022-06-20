@@ -1,4 +1,7 @@
-package zio.postgres.protocol
+package zio.postgres
+package decoder
+
+import protocol.*
 
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.util.chaining.*

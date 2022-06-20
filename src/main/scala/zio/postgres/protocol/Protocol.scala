@@ -6,9 +6,10 @@ import zio.stream.*
 
 import java.nio.ByteBuffer
 import java.time.Instant
-
-import connection.*
 import java.time.temporal.ChronoUnit
+
+import decoder.*
+import connection.*
 
 trait Protocol {
   def simpleQuery[A: Decoder](query: String): ZStream[Any, Protocol.Error, A]

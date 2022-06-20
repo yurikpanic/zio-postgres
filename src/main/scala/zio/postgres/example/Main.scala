@@ -3,15 +3,15 @@ package example
 
 import zio.*
 import zio.postgres.protocol.Wal.LogicalReplication
+import zio.postgres.protocol.Wal.LogicalReplication.CDecoder
 
 import java.time.Instant
 
 import connection.*
 import protocol.*
-import zio.postgres.protocol.Wal.LogicalReplication.CDecoder
 
 object Main extends ZIOAppDefault {
-  import Decoder.*
+  import decoder.Decoder.*
 
   val init = for {
     conn <- ZIO.service[Connection]

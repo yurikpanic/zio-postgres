@@ -1,12 +1,14 @@
-package zio.postgres.protocol
-
-import zio.postgres.protocol.Wal.LogicalReplication.TupleData.TDecoder
+package zio.postgres
+package protocol
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.Tuple.Concat
 import scala.util.Try
+
+import Wal.LogicalReplication.TupleData.TDecoder
+import decoder.*
 
 object Wal {
   enum Message[A] {
