@@ -104,7 +104,7 @@ object Protocol {
 
   enum State {
     case Ready
-    case QueryRespond[A](respond: Option[CmdResp.Cmd.Reply[A]], next: List[CmdResp.Cmd])
+    case QueryRespond[S, A](respond: Option[CmdResp.Cmd.Reply[A]], state: Option[S], next: List[CmdResp.Cmd])
   }
 
   val pgEpoch = Instant.parse("2000-01-01T00:00:00Z")
@@ -171,31 +171,32 @@ object Protocol {
       case (state, Cmd(kind @ Kind.CopyData(_))) => sendCommand(outQ, kind).as(state)
 
       // we are idle and got a new query to run
-      case (State.Ready, cmd @ Cmd(kind)) => sendCommand(outQ, kind).as(State.QueryRespond(kind.reply, Nil))
+      case (State.Ready, cmd @ Cmd(kind)) => sendCommand(outQ, kind).as(State.QueryRespond(kind.reply, None, Nil))
       // we are reading the results for the previous query, but got a new to run - store it in the state
-      case (State.QueryRespond(rq, next), cmd @ Cmd(_)) => ZIO.succeed(State.QueryRespond(rq, next ::: (cmd :: Nil)))
+      case (State.QueryRespond(rq, s, next), cmd @ Cmd(_)) =>
+        ZIO.succeed(State.QueryRespond(rq, s, next ::: (cmd :: Nil)))
 
       // send current query result, the state is kept the same
-      case (st @ State.QueryRespond(Some(reply), _), Resp(packet)) if reply.decoder.decode.isDefinedAt(packet) =>
+      case (st @ State.QueryRespond(Some(reply), _, _), Resp(packet)) if reply.decoder.decode.isDefinedAt(packet) =>
         reply.q.offer(reply.decoder.decode(packet).left.map(Error.Decode(_)).map(Some(_))).as(st)
 
       // query results are over - complete the results queue, but keep the state, dropping the queue
-      case (st @ State.QueryRespond(Some(reply), next), Resp(packet)) if reply.decoder.isDone(packet) =>
-        reply.q.offer(Right(None)).as(State.QueryRespond(None, next))
+      case (st @ State.QueryRespond(Some(reply), _, next), Resp(packet)) if reply.decoder.isDone(packet) =>
+        reply.q.offer(Right(None)).as(State.QueryRespond(None, None, next))
 
       // error happend executing previous query, we have no new query to run
-      case (State.QueryRespond(reply, Nil), Resp(Packet.Error(fields))) =>
+      case (State.QueryRespond(reply, _, Nil), Resp(Packet.Error(fields))) =>
         backendError(reply.map(_.q), fields).as(State.Ready)
       // error happend executing previous query, we already have a query to run next
-      case (State.QueryRespond(reply, h :: tl), Resp(Packet.Error(fields))) =>
-        sendCommand(outQ, h.kind) *> backendError(reply.map(_.q), fields).as(State.QueryRespond(h.kind.reply, tl))
+      case (State.QueryRespond(reply, _, h :: tl), Resp(Packet.Error(fields))) =>
+        sendCommand(outQ, h.kind) *> backendError(reply.map(_.q), fields).as(State.QueryRespond(h.kind.reply, None, tl))
 
       // previous query is complete, we have nothing to run next
-      case (State.QueryRespond(_, Nil), Resp(Packet.ReadyForQuery(_))) =>
+      case (State.QueryRespond(_, _, Nil), Resp(Packet.ReadyForQuery(_))) =>
         ZIO.succeed(State.Ready)
       // previous query is complete, we already have a query to run next
-      case (State.QueryRespond(_, h :: tl), Resp(Packet.ReadyForQuery(_))) =>
-        sendCommand(outQ, h.kind).as(State.QueryRespond(h.kind.reply, tl))
+      case (State.QueryRespond(_, s, h :: tl), Resp(Packet.ReadyForQuery(_))) =>
+        sendCommand(outQ, h.kind).as(State.QueryRespond(h.kind.reply, s, tl))
 
       // ignore any other packets
       case (s, _) => ZIO.succeed(s)
