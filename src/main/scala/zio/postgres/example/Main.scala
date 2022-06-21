@@ -3,7 +3,6 @@ package example
 
 import zio.*
 import zio.postgres.protocol.Wal.LogicalReplication
-import zio.postgres.protocol.Wal.LogicalReplication.CDecoder
 
 import java.time.Instant
 
@@ -23,7 +22,7 @@ object Main extends ZIOAppDefault {
     _ <- proto.simpleQuery("create publication testpub for table test").runCollect
     slot <- proto
       .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(
-        using Field.textValue ~ Field.textValue
+        using Field.text ~ Field.text
       )
       .runCollect
     _ <- Console.printLine(s"Replication slot created: $slot")
@@ -35,7 +34,10 @@ object Main extends ZIOAppDefault {
     res <- proto
       .simpleQuery(
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '2', publication_names '"testpub"')"""
-      )(using Wal.messageDecoder(CDecoder.int ~ CDecoder.textValue.opt ~ CDecoder.int.opt))
+      )(using {
+        import Wal.Decode.*
+        Wal.Decode(Field.int ~ Field.text.opt ~ Field.int.opt)
+      })
       .tap { x =>
         Console.printLine(s"WAL data: $x")
       }

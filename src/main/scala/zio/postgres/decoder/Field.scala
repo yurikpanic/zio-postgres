@@ -3,8 +3,11 @@ package decoder
 
 import zio.postgres.protocol.Packet.FieldFormat
 
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
 
+import util.*
 import protocol.Packet
 
 trait Field[A] {
@@ -20,11 +23,23 @@ trait Field[A] {
 
 object Field {
 
-  val textValue: Field[String] = new Field {
+  val text: Field[String] = new Field {
     override def sDecode(data: Option[String]): Either[Error, String] = data.toRight(Error.NullUnexpected)
     override def bDecode(data: Option[Array[Byte]]): Either[Error, String] = data
       .toRight(Error.NullUnexpected)
       .map(new String(_, UTF_8))
+  }
+
+  val int: Field[Int] = new Field {
+    override def sDecode(data: Option[String]): Either[Error, Int] = data
+      .toRight(Error.NullUnexpected)
+      .flatMap(_.toIntOption.toRight(decoder.Error.ParseFailed(s"Failed to parse '$data' as Int")))
+
+    override def bDecode(data: Option[Array[Byte]]): Either[Error, Int] = data
+      .toRight(Error.NullUnexpected)
+      .flatMap { arr =>
+        ByteBuffer.wrap(arr).order(ByteOrder.BIG_ENDIAN).getIntSafe.toRight(Error.WalBufferUnderflow)
+      }
   }
 
   def makeOpt[A]: Either[Error, A] => Either[Error, Option[A]] = {

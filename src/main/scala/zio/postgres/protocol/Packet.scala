@@ -1,14 +1,17 @@
-package zio.postgres.protocol
+package zio.postgres
+package protocol
 
 import zio.*
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
+import scala.collection.immutable.ArraySeq
 import scala.util.Try
 import scala.util.chaining.*
 import scala.util.control.NonFatal
-import scala.collection.immutable.ArraySeq
+
+import util.*
 
 enum Packet {
   case Generic(`type`: Byte, payload: Chunk[Byte])
@@ -363,50 +366,5 @@ object Packet {
       Field.Length,
       Field.Bytes(ArraySeq.unsafeWrapArray(data))
     )
-
-  extension (bb: ByteBuffer) {
-    def getString: Option[String] = {
-      val pos = bb.position()
-      def loop(acc: List[Byte]): Option[List[Byte]] = Try(bb.get).toOption.flatMap {
-        case 0 => Some(acc)
-        case x => loop(x :: acc)
-      }
-
-      loop(Nil)
-        .map(_.reverse.toArray.pipe(new String(_, UTF_8)))
-        .orElse {
-          bb.position(pos) // reset position on parse failure
-          None
-        }
-    }
-
-    // zero terminated strings list
-    def getStrings: Option[List[String]] = {
-      val pos = bb.position()
-
-      def loop(acc: List[String]): Option[List[String]] = {
-        val pos = bb.position()
-        Try(bb.get).toOption.flatMap {
-          case 0 => Some(acc)
-          case _ =>
-            bb.position(pos)
-            getString.map(_ :: acc).flatMap(loop(_))
-        }
-      }
-
-      loop(Nil)
-        .map(_.reverse)
-        .orElse {
-          bb.position(pos) // reset position on parse failure
-          None
-        }
-    }
-
-    def getShortSafe: Option[Short] = Try(bb.getShort).toOption
-    def getIntSafe: Option[Int] = Try(bb.getInt).toOption
-    def getLongSafe: Option[Long] = Try(bb.getLong).toOption
-    def getByteSafe: Option[Byte] = Try(bb.get).toOption
-
-  }
 
 }

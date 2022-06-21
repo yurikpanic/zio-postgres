@@ -1,15 +1,17 @@
 package zio.postgres
 package protocol
 
+import zio.postgres
+import zio.postgres.protocol.Wal.Decode.TDecoder
+
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.Tuple.Concat
 import scala.util.Try
 
-import Wal.LogicalReplication.TupleData.TDecoder
+import util.*
 import decoder.Decoder
-import zio.postgres
 
 object Wal {
   enum Message[A] {
@@ -58,8 +60,6 @@ object Wal {
 
   object Message {
     def parse[A: TDecoder](data: Array[Byte]): Either[decoder.Error, Message[A]] = {
-      import Packet._
-
       val bb = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
 
       (bb.getByteSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap {
@@ -87,8 +87,6 @@ object Wal {
 
   object LogicalReplication {
     def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-      import Packet._
-
       bb.getByteSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap {
         case 'B'   => Begin.parse(bb)
         case 'M'   => Message.parse(bb)
@@ -111,32 +109,8 @@ object Wal {
     type TupleData = List[Column]
 
     object TupleData {
-      trait TDecoder[A] {
-        def decode(xs: TupleData): Either[decoder.Error, A]
-      }
-
-      object TDecoder {
-        def apply[A](fn: TupleData => Either[decoder.Error, A]): TDecoder[A] = new TDecoder[A] {
-          override def decode(xs: TupleData): Either[decoder.Error, A] = fn(xs)
-        }
-
-        given TDecoder[TupleData] = TDecoder((identity[TupleData] _).andThen(Right(_)))
-
-        extension [A <: Tuple](self: TDecoder[A]) {
-          def ~[B](cd: CDecoder[B]): TDecoder[Tuple.Concat[A, Tuple1[B]]] = new TDecoder {
-            override def decode(xs: TupleData): Either[decoder.Error, Concat[A, Tuple1[B]]] =
-              self.decode(xs).flatMap { a =>
-                xs.drop(a.size) match {
-                  case b :: _ => cd.decode(b).map { b => a ++ Tuple1(b) }
-                  case _      => Left(decoder.Error.ResultSetExhausted)
-                }
-              }
-          }
-        }
-      }
 
       def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, A] = {
-        import Packet._
         bb.getShortSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap { num =>
           (0 until num)
             .foldLeft[Either[decoder.Error, TupleData]](Right(Nil)) { (acc, _) =>
@@ -161,7 +135,6 @@ object Wal {
 
     object Column {
       def parse(bb: ByteBuffer): Either[decoder.Error, Column] = {
-        import Packet._
         bb.getByteSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap {
           case 'n' => Right(NullValue)
           case 'u' => Right(Unchanged)
@@ -183,61 +156,9 @@ object Wal {
 
     }
 
-    trait CDecoder[A] {
-      def decode(c: Column): Either[decoder.Error, A]
-    }
-
-    object CDecoder {
-      def apply[A](fn: Column => Either[decoder.Error, A]): CDecoder[A] = new CDecoder[A] {
-        override def decode(c: Column): Either[decoder.Error, A] = fn(c)
-      }
-
-      given CDecoder[Column] = CDecoder((identity[Column] _).andThen(Right(_)))
-
-      extension [A](self: CDecoder[A]) {
-
-        def opt: CDecoder[Option[A]] = CDecoder((self.decode _).andThen {
-          case Left(decoder.Error.NullUnexpected) => Right(None)
-          case Right(x)                           => Right(Some(x))
-          case x                                  => x.map(Some(_))
-        })
-
-        def ~[B](that: CDecoder[B]): TDecoder[(A, B)] = new TDecoder[(A, B)] {
-          override def decode(xs: TupleData): Either[decoder.Error, (A, B)] = xs match {
-            case a :: b :: _ => self.decode(a).flatMap(a => that.decode(b).map(a -> _))
-            case _           => Left(decoder.Error.ResultSetExhausted)
-          }
-        }
-      }
-
-      val textValue: CDecoder[String] = new CDecoder {
-        override def decode(c: Column): Either[decoder.Error, String] = c match {
-          case Column.NullValue => Left(decoder.Error.NullUnexpected)
-          case Column.Unchanged =>
-            Left(decoder.Error.Unexpected(s"Do not know how to decode Unchanged column value")) // TODO
-          case Column.Binary(b) => Right(new String(b, UTF_8))
-          case Column.Text(s)   => Right(s)
-        }
-      }
-
-      val int: CDecoder[Int] = new CDecoder {
-        override def decode(c: Column): Either[decoder.Error, Int] = c match {
-          case Column.NullValue => Left(decoder.Error.NullUnexpected)
-          case Column.Unchanged =>
-            Left(decoder.Error.Unexpected(s"Do not know how to decode Unchanged column value")) // TODO
-          case Column.Binary(b) =>
-            // FIXME: do not think int is represented like this in binary format
-            val s = new String(b, UTF_8)
-            s.toIntOption.toRight(decoder.Error.ParseFailed(s"Failed to parse '$s' as Int"))
-          case Column.Text(s) => s.toIntOption.toRight(decoder.Error.ParseFailed(s"Failed to parse '$s' as Int"))
-        }
-      }
-    }
-
     object Begin {
 
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           lsn <- bb.getLongSafe
           ts <- bb.getLongSafe
@@ -248,7 +169,6 @@ object Wal {
 
     object Message {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           flags <- bb.getByteSafe
           lsn <- bb.getLongSafe
@@ -262,7 +182,6 @@ object Wal {
 
     object Commit {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           flags <- bb.getByteSafe
           lsn <- bb.getLongSafe
@@ -274,7 +193,6 @@ object Wal {
 
     object Origin {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           lsn <- bb.getLongSafe
           name <- bb.getString
@@ -287,7 +205,6 @@ object Wal {
 
       object Column {
         def parse(bb: ByteBuffer): Either[decoder.Error, Column] = {
-          import Packet._
           for {
             flags <- bb.getByteSafe
             name <- bb.getString
@@ -302,7 +219,6 @@ object Wal {
       }
 
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           id <- bb.getIntSafe
           ns <- bb.getString
@@ -323,7 +239,6 @@ object Wal {
 
     object Type {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           id <- bb.getIntSafe
           ns <- bb.getString
@@ -334,7 +249,6 @@ object Wal {
 
     object Insert {
       def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         (for {
           id <- bb.getIntSafe
           n <- bb.getByteSafe
@@ -346,7 +260,6 @@ object Wal {
 
     object Update {
       def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         (for {
           id <- bb.getIntSafe
           keyKind <- bb.getByteSafe
@@ -370,7 +283,6 @@ object Wal {
 
     object Delete {
       def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         (for {
           id <- bb.getIntSafe
           keyKind <- bb.getByteSafe
@@ -388,7 +300,6 @@ object Wal {
 
     object Truncate {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         (for {
           numRels <- bb.getIntSafe
           option <- bb.getByteSafe
@@ -407,7 +318,6 @@ object Wal {
 
     object StreamStart {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           xid <- bb.getIntSafe
           firstSegment <- bb.getByteSafe
@@ -417,7 +327,6 @@ object Wal {
 
     object StreamCommit {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           xid <- bb.getIntSafe
           flags <- bb.getByteSafe
@@ -430,7 +339,6 @@ object Wal {
 
     object StreamAbort {
       def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-        import Packet._
         for {
           xid <- bb.getIntSafe
           subXid <- bb.getIntSafe
@@ -439,15 +347,68 @@ object Wal {
     }
   }
 
-  given messageDecoder[A: TDecoder]: Decoder[_, Message[A]] =
-    new Decoder[_, Message[A]] {
-      override def decode = { case (s, Packet.CopyData(data)) =>
-        Message.parse(data).map(x => s -> Some(x))
+  object Decode {
+    import LogicalReplication.*
+
+    def apply[A: TDecoder]: Decoder[_, Wal.Message[A]] =
+      new Decoder[_, Wal.Message[A]] {
+        override def decode = { case (s, Packet.CopyData(data)) =>
+          Wal.Message.parse(data).map(x => s -> Some(x))
+        }
+
+        // TODO: perhaps we should terminate on some errors and maybe some other conditions?
+        override def isDone(p: Packet): Boolean = false
       }
 
-      // TODO: perhaps we should terminate on some errors and maybe some other conditions?
-      override def isDone(p: Packet): Boolean = false
+    extension [A](fd: decoder.Field[A]) {
+
+      def decode(c: Column): Either[decoder.Error, A] = c match {
+        case Column.Text(s)   => fd.sDecode(Some(s))
+        case Column.Binary(b) => fd.bDecode(Some(b))
+        case Column.NullValue => fd.sDecode(None)
+        case Column.Unchanged => Left(decoder.Error.Unexpected(s"Unchanged values decoding not supported"))
+      }
+
+      def ~[B](that: decoder.Field[B]): TDecoder[(A, B)] = new TDecoder {
+        override def decode(xs: TupleData) = xs match {
+          case a :: b :: _ => fd.decode(a).flatMap { a => that.decode(b).map(a -> _) }
+          case _           => Left(decoder.Error.ResultSetExhausted)
+        }
+      }
     }
+
+    trait TDecoder[A] {
+      def decode(xs: TupleData): Either[decoder.Error, A]
+    }
+
+    object TDecoder {
+      def apply[A](fn: TupleData => Either[decoder.Error, A]): TDecoder[A] = new TDecoder[A] {
+        override def decode(xs: TupleData): Either[decoder.Error, A] = fn(xs)
+      }
+
+      def apply[A](fd: decoder.Field[A]): TDecoder[A] = new TDecoder[A] {
+        override def decode(xs: TupleData): Either[decoder.Error, A] = xs match {
+          case c :: _ => fd.decode(c)
+          case _      => Left(decoder.Error.ResultSetExhausted)
+        }
+      }
+
+      given TDecoder[TupleData] = TDecoder((identity[TupleData] _).andThen(Right(_)))
+
+      extension [A <: Tuple](self: TDecoder[A]) {
+        def ~[B](fd: decoder.Field[B]): TDecoder[Tuple.Concat[A, Tuple1[B]]] = new TDecoder {
+          override def decode(xs: TupleData): Either[decoder.Error, Concat[A, Tuple1[B]]] =
+            self.decode(xs).flatMap { a =>
+              (xs.drop(a.size) match {
+                case c :: _ => fd.decode(c)
+                case _      => Left(decoder.Error.ResultSetExhausted)
+              }).map { b => a ++ Tuple1(b) }
+            }
+        }
+      }
+
+    }
+  }
 
   def standbyStatusUpdate(
       walWritten: Long,
