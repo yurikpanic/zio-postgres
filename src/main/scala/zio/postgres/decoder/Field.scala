@@ -65,7 +65,8 @@ object Field {
               .toRight(Error.ResultSetExhausted)
               .flatMap((fd.decode _).tupled)
               .map(x => s -> Some(x))
-          case Right(None, _) => Left(Error.NoRowDescription)
+          case Right(s @ Some(_), None) => Right(s -> None)
+          case Right(None, _)           => Left(Error.NoRowDescription)
         }
       }
 
@@ -89,6 +90,8 @@ object Field {
 
                 case _ => Left(Error.ResultSetExhausted)
               }
+
+            case Right(s @ Some(_), None) => Right(s -> None)
 
             case Right(None, _) => Left(Error.NoRowDescription)
           }

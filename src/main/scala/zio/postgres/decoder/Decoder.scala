@@ -14,8 +14,9 @@ trait Decoder[S, A] {
 object Decoder {
 
   given Decoder[Packet.RowDescription, Packet.DataRow] = new Decoder[Packet.RowDescription, Packet.DataRow] {
-    override def decode = { case (s, dr: Packet.DataRow) =>
-      Right(s -> Some(dr))
+    override def decode = {
+      case (s, dr: Packet.DataRow)        => Right(s -> Some(dr))
+      case (_, rd: Packet.RowDescription) => Right(Some(rd) -> None)
     }
     override def isDone(p: Packet) = p match {
       case Packet.CommandComplete(_) => true

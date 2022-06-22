@@ -82,11 +82,15 @@ object Main extends ZIOAppDefault {
   val queries = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(None)
-    _ <- proto.simpleQuery("insert into test (id, value, x) values (1, 'aaa', 10)").runCollect
-    _ <- proto.simpleQuery("insert into test (id, value) values (2, 'bbb')").runCollect
-    _ <- proto.simpleQuery("insert into test (id, value, x) values (3, 'ccc', 30)").runCollect
-    _ <- proto.simpleQuery("update test set x = 20 where id = 2").runCollect
-    _ <- proto.simpleQuery("update test set value = null where id = 3").runCollect
+    id <- proto
+      .simpleQuery("select coalesce(max(id), 0) + 1 from test")(using Field.int.single)
+      .runLast
+      .map(_.getOrElse(1))
+    _ <- proto.simpleQuery(s"insert into test (id, value, x) values ($id, 'aaa', ${id * 10})").runCollect
+    _ <- proto.simpleQuery(s"insert into test (id, value) values (${id + 1}, 'bbb')").runCollect
+    _ <- proto.simpleQuery(s"insert into test (id, value, x) values (${id + 2}, 'ccc', ${(id + 2) * 10})").runCollect
+    _ <- proto.simpleQuery(s"update test set x = ${(id + 1) * 10} where id = ${id + 1}").runCollect
+    _ <- proto.simpleQuery(s"update test set value = null where id = ${id + 2}").runCollect
   } yield ()
 
   override def run = {
