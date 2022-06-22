@@ -3,6 +3,8 @@ package example
 
 import java.time.Instant
 
+import scala.util.chaining.*
+
 import zio.*
 
 import replication.Wal
@@ -18,7 +20,7 @@ object Main extends ZIOAppDefault {
   val init = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(None)
-    _ <- proto.simpleQuery("create table test(id integer primary key, value text, x integer)").runCollect
+    _ <- proto.simpleQuery("create table test(id integer primary key, value text not null, x integer)").runCollect
     _ <- proto.simpleQuery("create publication testpub for table test").runCollect
     slot <- proto
       .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(
@@ -36,14 +38,14 @@ object Main extends ZIOAppDefault {
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '2', publication_names '"testpub"')"""
       )(using {
         import replication.Decoder.*
-        replication.Decoder(Field.int ~ Field.text.opt ~ Field.int.opt)
+        replication.Decoder(Field.int ~ Field.text ~ Field.int.opt, Field.int.single)
       })
       .tap {
         case Wal.Message.PrimaryKeepAlive(walEnd, _, _) =>
           proto.standbyStatusUpdate(walEnd, walEnd, walEnd, Instant.now())
         case _ => ZIO.unit
       }
-      .mapAccumZIO(Map.empty[Int, (Option[String], Option[Int])]) {
+      .mapAccumZIO(Map.empty[Int, (String, Option[Int])]) {
         case (
               acc,
               Wal.Message.XLogData(
@@ -54,20 +56,32 @@ object Main extends ZIOAppDefault {
               )
             ) =>
           val state = acc + (id -> (value -> x))
-          Console.printLine(s"State: $state").as(state -> state)
+          Console.printLine(s"State [insert]: $state").as(state -> state)
 
-        // This handles only updates that does not touch the key data
         case (
               acc,
               Wal.Message.XLogData(
                 _,
                 _,
                 _,
-                LogicalReplication.Update(_, None, (id, value, x))
+                LogicalReplication.Update(_, key, (id, value, x))
               )
             ) =>
-          val state = acc + (id -> (value -> x))
-          Console.printLine(s"State: $state").as(state -> state)
+          val state = key.fold(acc)(_.fold(identity, identity).pipe(acc - _)) +
+            (id -> (value -> x))
+          Console.printLine(s"State [update]: $state").as(state -> state)
+
+        case (
+              acc,
+              Wal.Message.XLogData(
+                _,
+                _,
+                _,
+                LogicalReplication.Delete(_, key)
+              )
+            ) =>
+          val state = acc - key.fold(identity, identity)
+          Console.printLine(s"State [delete]: $state").as(state -> state)
 
         case (acc, message) =>
           ZIO.succeed(acc -> acc)
@@ -87,7 +101,7 @@ object Main extends ZIOAppDefault {
     _ <- proto.simpleQuery(s"insert into test (id, value) values (${id + 1}, 'bbb')").runCollect
     _ <- proto.simpleQuery(s"insert into test (id, value, x) values (${id + 2}, 'ccc', ${(id + 2) * 10})").runCollect
     _ <- proto.simpleQuery(s"update test set x = ${(id + 1) * 10} where id = ${id + 1}").runCollect
-    _ <- proto.simpleQuery(s"update test set value = null where id = ${id + 2}").runCollect
+    _ <- proto.simpleQuery(s"update test set id = ${id + 3}, value = 'CCC' where id = ${id + 2}").runCollect
   } yield ()
 
   override def run = {

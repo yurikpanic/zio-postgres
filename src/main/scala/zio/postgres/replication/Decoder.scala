@@ -9,10 +9,10 @@ import protocol.Packet
 object Decoder {
   import Wal.LogicalReplication.*
 
-  def apply[A: TupleDecoder]: GDecoder[_, Wal.Message[A]] =
-    new GDecoder[_, Wal.Message[A]] {
+  def apply[A: TupleDecoder, K: TupleDecoder]: GDecoder[_, Wal.Message[A, K]] =
+    new GDecoder[_, Wal.Message[A, K]] {
       override def decode = { case (s, Packet.CopyData(data)) =>
-        Wal.Message.parse(data).map(x => s -> Option(x))
+        Wal.Message.parse[A, K](data).map(x => s -> Option(x))
       }
 
       // TODO: perhaps we should terminate on some errors and maybe some other conditions?
@@ -26,6 +26,11 @@ object Decoder {
       case Column.Binary(b) => fd.bDecode(Some(b))
       case Column.NullValue => fd.sDecode(None)
       case Column.Unchanged => Left(DecodeError.Unexpected(s"Unchanged values decoding not supported"))
+    }
+
+    def single: TupleDecoder[A] = TupleDecoder {
+      case a :: _ => fd.decode(a)
+      case _      => Left(DecodeError.ResultSetExhausted)
     }
 
     def ~[B](that: Field[B]): TupleDecoder[(A, B)] = new TupleDecoder {

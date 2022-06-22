@@ -42,6 +42,11 @@ object Field {
       }
   }
 
+  val unit: Field[Unit] = new Field {
+    override def bDecode(data: Option[Array[Byte]]): Either[DecodeError, Unit] = Right(())
+    override def sDecode(data: Option[String]): Either[DecodeError, Unit] = Right(())
+  }
+
   def makeOpt[A]: Either[DecodeError, A] => Either[DecodeError, Option[A]] = {
     case Left(DecodeError.NullUnexpected) => Right(None)
     case Right(x)                         => Right(Some(x))
