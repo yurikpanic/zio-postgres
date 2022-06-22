@@ -2,6 +2,7 @@ package zio.postgres.util
 
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
+
 import scala.util.Try
 import scala.util.chaining.*
 

@@ -1,11 +1,12 @@
 package zio.postgres.protocol
 
-import zio.*
-import zio.stream.*
-
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+
 import scala.util.chaining.*
+
+import zio.*
+import zio.stream.*
 
 trait Parser {
   def pipeline: ZPipeline[Any, Packet.ParseError, Byte, Packet]

@@ -1,15 +1,16 @@
 package zio.postgres
 package protocol
 
-import zio.*
-
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
+
 import scala.collection.immutable.ArraySeq
 import scala.util.Try
 import scala.util.chaining.*
 import scala.util.control.NonFatal
+
+import zio.*
 
 import util.*
 
@@ -366,5 +367,27 @@ object Packet {
       Field.Length,
       Field.Bytes(ArraySeq.unsafeWrapArray(data))
     )
+
+  def standbyStatusUpdate(
+      walWritten: Long,
+      walFlushed: Long,
+      walApplied: Long,
+      clock: Long,
+      replyNow: Boolean = false
+  ): Array[Byte] = {
+    val _replyNow: Byte = if (replyNow) 1 else 0
+    val bb = Gen.make(
+      Field.Byte('r'),
+      Field.Int64(walWritten),
+      Field.Int64(walFlushed),
+      Field.Int64(walApplied),
+      Field.Int64(clock),
+      Field.Byte(_replyNow)
+    )
+
+    val arr = new Array[Byte](bb.limit() - bb.position())
+    bb.get(arr)
+    arr
+  }
 
 }

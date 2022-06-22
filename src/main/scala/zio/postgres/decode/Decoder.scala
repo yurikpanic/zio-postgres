@@ -1,13 +1,14 @@
 package zio.postgres
-package decoder
+package decode
 
 import java.nio.charset.StandardCharsets.UTF_8
+
 import scala.util.chaining.*
 
 import protocol.*
 
 trait Decoder[S, A] {
-  def decode: PartialFunction[(Option[S], Packet), Either[Error, (Option[S], Option[A])]]
+  def decode: PartialFunction[(Option[S], Packet), Either[DecodeError, (Option[S], Option[A])]]
   def isDone(p: Packet): Boolean
 }
 
@@ -25,7 +26,7 @@ object Decoder {
   }
 
   trait Field[A] {
-    def decode(data: Option[Array[Byte]]): Either[Error, A]
+    def decode(data: Option[Array[Byte]]): Either[DecodeError, A]
   }
 
   extension [S, A <: Tuple](d: Decoder[S, A]) {
@@ -41,7 +42,7 @@ object Decoder {
             case (s, Some(a)) =>
               data.fields.drop(a.size) match {
                 case x :: _ => fd.decode(x).map { b => s -> Some(a ++ Tuple1(b)) }
-                case _      => Left(Error.ResultSetExhausted)
+                case _      => Left(DecodeError.ResultSetExhausted)
               }
 
             case (s, None) =>

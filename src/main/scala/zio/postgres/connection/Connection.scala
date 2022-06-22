@@ -1,11 +1,11 @@
 package zio.postgres
 package connection
 
-import zio.*
-import zio.stream.*
-
 import java.io.IOException
 import java.nio.ByteBuffer
+
+import zio.*
+import zio.stream.*
 
 import protocol._
 

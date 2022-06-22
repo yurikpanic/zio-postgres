@@ -1,15 +1,15 @@
 package zio.postgres
 package protocol
 
-import zio.*
-import zio.stream.*
-
 import java.nio.ByteBuffer
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
+import zio.*
+import zio.stream.*
+
 import connection.*
-import decoder.Decoder
+import decode.Decoder
 
 trait Protocol {
   def simpleQuery[S, A](query: String)(using Decoder[S, A]): ZStream[Any, Protocol.Error, A]
@@ -26,7 +26,7 @@ object Protocol {
 
   enum Error {
     case Backend(fields: Map[Error.Backend.Type, String])
-    case Decode(error: decoder.Error)
+    case Decode(error: decode.DecodeError)
   }
 
   object Error {
@@ -136,7 +136,7 @@ object Protocol {
       .offer(
         Cmd(
           Kind.CopyData(
-            Wal.standbyStatusUpdate(
+            Packet.standbyStatusUpdate(
               walWritten,
               walFlushed,
               walApplied,

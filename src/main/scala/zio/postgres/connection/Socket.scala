@@ -1,13 +1,13 @@
 package zio.postgres
 package connection
 
-import zio.*
-import zio.stream.*
-
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
+
+import zio.*
+import zio.stream.*
 
 trait Socket {
   def connect(host: String, port: Int): ZIO[

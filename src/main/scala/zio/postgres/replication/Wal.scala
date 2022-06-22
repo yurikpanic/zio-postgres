@@ -1,17 +1,17 @@
 package zio.postgres
-package protocol
-
-import zio.postgres
-import zio.postgres.protocol.Wal.Decode.TDecoder
+package replication
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
-import scala.Tuple.Concat
+
 import scala.util.Try
 
+import decode.DecodeError
+import decode.Decoder
+import protocol.Packet
+import replication.Decoder.TupleDecoder
 import util.*
-import decoder.Decoder
 
 object Wal {
   enum Message[A] {
@@ -59,35 +59,35 @@ object Wal {
   }
 
   object Message {
-    def parse[A: TDecoder](data: Array[Byte]): Either[decoder.Error, Message[A]] = {
+    def parse[A: TupleDecoder](data: Array[Byte]): Either[DecodeError, Message[A]] = {
       val bb = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN)
 
-      (bb.getByteSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap {
+      (bb.getByteSafe.toRight(DecodeError.WalBufferUnderflow).flatMap {
         case 'k' =>
           (for {
             walEnd <- bb.getLongSafe
             clock <- bb.getLongSafe
             needReply <- bb.getByteSafe
-          } yield PrimaryKeepAlive(walEnd, clock, needReply == 1)).toRight(decoder.Error.WalBufferUnderflow)
+          } yield PrimaryKeepAlive(walEnd, clock, needReply == 1)).toRight(DecodeError.WalBufferUnderflow)
 
         case 'w' =>
           (for {
             startingPoint <- bb.getLongSafe
             walEnd <- bb.getLongSafe
             clock <- bb.getLongSafe
-          } yield (startingPoint, walEnd, clock)).toRight(decoder.Error.WalBufferUnderflow).flatMap {
+          } yield (startingPoint, walEnd, clock)).toRight(DecodeError.WalBufferUnderflow).flatMap {
             case (startingPoint, walEnd, clock) =>
               LogicalReplication.parse(bb).map { data => XLogData(startingPoint, walEnd, clock, data) }
           }
 
-        case other => Left(decoder.Error.UnknownWalMessage(other))
+        case other => Left(DecodeError.UnknownWalMessage(other))
       })
     }
   }
 
   object LogicalReplication {
-    def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
-      bb.getByteSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap {
+    def parse[A: TupleDecoder](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
+      bb.getByteSafe.toRight(DecodeError.WalBufferUnderflow).flatMap {
         case 'B'   => Begin.parse(bb)
         case 'M'   => Message.parse(bb)
         case 'C'   => Commit.parse(bb)
@@ -102,7 +102,7 @@ object Wal {
         case 'E'   => Right(StreamStop)
         case 'c'   => StreamCommit.parse(bb)
         case 'A'   => StreamAbort.parse(bb)
-        case other => Left(decoder.Error.UnknownLogicalReplicationMessage(other))
+        case other => Left(DecodeError.UnknownLogicalReplicationMessage(other))
       }
     }
 
@@ -110,10 +110,10 @@ object Wal {
 
     object TupleData {
 
-      def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, A] = {
-        bb.getShortSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap { num =>
+      def parse[A: TupleDecoder](bb: ByteBuffer): Either[DecodeError, A] = {
+        bb.getShortSafe.toRight(DecodeError.WalBufferUnderflow).flatMap { num =>
           (0 until num)
-            .foldLeft[Either[decoder.Error, TupleData]](Right(Nil)) { (acc, _) =>
+            .foldLeft[Either[DecodeError, TupleData]](Right(Nil)) { (acc, _) =>
               acc.flatMap { acc =>
                 Column
                   .parse(bb)
@@ -121,7 +121,7 @@ object Wal {
               }
             }
             .map(_.reverse)
-            .flatMap(summon[TDecoder[A]].decode _)
+            .flatMap(summon[TupleDecoder[A]].decode _)
         }
       }
     }
@@ -134,8 +134,8 @@ object Wal {
     }
 
     object Column {
-      def parse(bb: ByteBuffer): Either[decoder.Error, Column] = {
-        bb.getByteSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap {
+      def parse(bb: ByteBuffer): Either[DecodeError, Column] = {
+        bb.getByteSafe.toRight(DecodeError.WalBufferUnderflow).flatMap {
           case 'n' => Right(NullValue)
           case 'u' => Right(Unchanged)
           case 't' =>
@@ -144,13 +144,13 @@ object Wal {
               arr = new Array[Byte](len)
               _ <- Try(bb.get(arr)).toOption
               value = new String(arr, UTF_8)
-            } yield Text(value)).toRight(decoder.Error.WalBufferUnderflow)
+            } yield Text(value)).toRight(DecodeError.WalBufferUnderflow)
           case 'b' =>
             (for {
               len <- bb.getIntSafe
               arr = new Array[Byte](len)
               _ <- Try(bb.get(arr)).toOption
-            } yield Binary(arr)).toRight(decoder.Error.WalBufferUnderflow)
+            } yield Binary(arr)).toRight(DecodeError.WalBufferUnderflow)
         }
       }
 
@@ -158,17 +158,17 @@ object Wal {
 
     object Begin {
 
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           lsn <- bb.getLongSafe
           ts <- bb.getLongSafe
           xid <- bb.getIntSafe
         } yield Begin(lsn, ts, xid)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
 
     object Message {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           flags <- bb.getByteSafe
           lsn <- bb.getLongSafe
@@ -177,48 +177,48 @@ object Wal {
           arr = new Array[Byte](len)
           _ <- Try(bb.get(arr)).toOption
         } yield Message(flags, lsn, prefix, arr)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
 
     object Commit {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           flags <- bb.getByteSafe
           lsn <- bb.getLongSafe
           endLsn <- bb.getLongSafe
           ts <- bb.getLongSafe
         } yield Commit(flags, lsn, endLsn, ts)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
 
     object Origin {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           lsn <- bb.getLongSafe
           name <- bb.getString
         } yield Origin(lsn, name)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
 
     object Relation {
       final case class Column(flags: Byte, name: String, dataTypeId: Int, typeModifier: Int)
 
       object Column {
-        def parse(bb: ByteBuffer): Either[decoder.Error, Column] = {
+        def parse(bb: ByteBuffer): Either[DecodeError, Column] = {
           for {
             flags <- bb.getByteSafe
             name <- bb.getString
             dtId <- bb.getIntSafe
             typMod <- bb.getIntSafe
           } yield Column(flags, name, dtId, typMod)
-        }.toRight(decoder.Error.WalBufferUnderflow)
+        }.toRight(DecodeError.WalBufferUnderflow)
 
         extension (c: Column) {
           def isKey: Boolean = (c.flags & 1) != 0
         }
       }
 
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           id <- bb.getIntSafe
           ns <- bb.getString
@@ -226,9 +226,9 @@ object Wal {
           replicaIdentity <- bb.getByteSafe
           numColumns <- bb.getShortSafe
         } yield (id, ns, name, replicaIdentity, numColumns)
-      }.toRight(decoder.Error.WalBufferUnderflow).flatMap { case (id, ns, name, replicaIdentity, numColumns) =>
+      }.toRight(DecodeError.WalBufferUnderflow).flatMap { case (id, ns, name, replicaIdentity, numColumns) =>
         {
-          (0 until numColumns).foldLeft[Either[decoder.Error, List[Column]]](Right(Nil)) { (acc, _) =>
+          (0 until numColumns).foldLeft[Either[DecodeError, List[Column]]](Right(Nil)) { (acc, _) =>
             acc.flatMap { acc =>
               Column.parse(bb).map(_ :: acc)
             }
@@ -238,41 +238,41 @@ object Wal {
     }
 
     object Type {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           id <- bb.getIntSafe
           ns <- bb.getString
           name <- bb.getString
         } yield Type(id, ns, name)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
 
     object Insert {
-      def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A: TupleDecoder](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         (for {
           id <- bb.getIntSafe
           n <- bb.getByteSafe
-        } yield id).toRight(decoder.Error.WalBufferUnderflow).flatMap { id =>
+        } yield id).toRight(DecodeError.WalBufferUnderflow).flatMap { id =>
           TupleData.parse(bb).map(Insert(id, _))
         }
       }
     }
 
     object Update {
-      def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A: TupleDecoder](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         (for {
           id <- bb.getIntSafe
           keyKind <- bb.getByteSafe
-        } yield (id, keyKind)).toRight(decoder.Error.WalBufferUnderflow).flatMap { case (id, keyKind) =>
+        } yield (id, keyKind)).toRight(DecodeError.WalBufferUnderflow).flatMap { case (id, keyKind) =>
           TupleData.parse(bb).flatMap { data =>
             if (keyKind == 'N') Right(Update(id, oldTuples = None, newTuples = data))
             else
-              bb.getByteSafe.toRight(decoder.Error.WalBufferUnderflow).flatMap { _ =>
+              bb.getByteSafe.toRight(DecodeError.WalBufferUnderflow).flatMap { _ =>
                 TupleData.parse(bb).flatMap { newData =>
                   keyKind match {
                     case 'K'   => Right(Update(id, oldTuples = Some(Left(data)), newTuples = newData))
                     case 'O'   => Right(Update(id, oldTuples = Some(Right(data)), newTuples = newData))
-                    case other => Left(decoder.Error.UnknownLogicalReplicationUpdateKind(other))
+                    case other => Left(DecodeError.UnknownLogicalReplicationUpdateKind(other))
                   }
                 }
               }
@@ -282,16 +282,16 @@ object Wal {
     }
 
     object Delete {
-      def parse[A: TDecoder](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A: TupleDecoder](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         (for {
           id <- bb.getIntSafe
           keyKind <- bb.getByteSafe
-        } yield (id, keyKind)).toRight(decoder.Error.WalBufferUnderflow).flatMap { case (id, keyKind) =>
+        } yield (id, keyKind)).toRight(DecodeError.WalBufferUnderflow).flatMap { case (id, keyKind) =>
           TupleData.parse(bb).flatMap { data =>
             keyKind match {
               case 'K'   => Right(Delete(id, Left(data)))
               case 'O'   => Right(Delete(id, Right(data)))
-              case other => Left(decoder.Error.UnknownLogicalReplicationUpdateKind(other))
+              case other => Left(DecodeError.UnknownLogicalReplicationUpdateKind(other))
             }
           }
         }
@@ -299,34 +299,34 @@ object Wal {
     }
 
     object Truncate {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         (for {
           numRels <- bb.getIntSafe
           option <- bb.getByteSafe
-        } yield (numRels, option)).toRight(decoder.Error.WalBufferUnderflow).flatMap { case (numRels, option) =>
+        } yield (numRels, option)).toRight(DecodeError.WalBufferUnderflow).flatMap { case (numRels, option) =>
           {
             (0 until numRels).foldLeft[Option[List[Int]]](Some(Nil)) { (acc, _) =>
               acc.flatMap { acc =>
                 bb.getIntSafe.map(_ :: acc)
               }
             }
-          }.toRight(decoder.Error.WalBufferUnderflow)
+          }.toRight(DecodeError.WalBufferUnderflow)
             .map(xs => Truncate(option, xs.reverse))
         }
       }
     }
 
     object StreamStart {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           xid <- bb.getIntSafe
           firstSegment <- bb.getByteSafe
         } yield StreamStart(xid, firstSegment == 1)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
 
     object StreamCommit {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           xid <- bb.getIntSafe
           flags <- bb.getByteSafe
@@ -334,101 +334,17 @@ object Wal {
           endLsn <- bb.getLongSafe
           ts <- bb.getLongSafe
         } yield StreamCommit(xid, flags, lsn, endLsn, ts)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
 
     object StreamAbort {
-      def parse[A](bb: ByteBuffer): Either[decoder.Error, LogicalReplication[A]] = {
+      def parse[A](bb: ByteBuffer): Either[DecodeError, LogicalReplication[A]] = {
         for {
           xid <- bb.getIntSafe
           subXid <- bb.getIntSafe
         } yield StreamAbort(xid, subXid)
-      }.toRight(decoder.Error.WalBufferUnderflow)
+      }.toRight(DecodeError.WalBufferUnderflow)
     }
   }
 
-  object Decode {
-    import LogicalReplication.*
-
-    def apply[A: TDecoder]: Decoder[_, Wal.Message[A]] =
-      new Decoder[_, Wal.Message[A]] {
-        override def decode = { case (s, Packet.CopyData(data)) =>
-          Wal.Message.parse(data).map(x => s -> Some(x))
-        }
-
-        // TODO: perhaps we should terminate on some errors and maybe some other conditions?
-        override def isDone(p: Packet): Boolean = false
-      }
-
-    extension [A](fd: decoder.Field[A]) {
-
-      def decode(c: Column): Either[decoder.Error, A] = c match {
-        case Column.Text(s)   => fd.sDecode(Some(s))
-        case Column.Binary(b) => fd.bDecode(Some(b))
-        case Column.NullValue => fd.sDecode(None)
-        case Column.Unchanged => Left(decoder.Error.Unexpected(s"Unchanged values decoding not supported"))
-      }
-
-      def ~[B](that: decoder.Field[B]): TDecoder[(A, B)] = new TDecoder {
-        override def decode(xs: TupleData) = xs match {
-          case a :: b :: _ => fd.decode(a).flatMap { a => that.decode(b).map(a -> _) }
-          case _           => Left(decoder.Error.ResultSetExhausted)
-        }
-      }
-    }
-
-    trait TDecoder[A] {
-      def decode(xs: TupleData): Either[decoder.Error, A]
-    }
-
-    object TDecoder {
-      def apply[A](fn: TupleData => Either[decoder.Error, A]): TDecoder[A] = new TDecoder[A] {
-        override def decode(xs: TupleData): Either[decoder.Error, A] = fn(xs)
-      }
-
-      def apply[A](fd: decoder.Field[A]): TDecoder[A] = new TDecoder[A] {
-        override def decode(xs: TupleData): Either[decoder.Error, A] = xs match {
-          case c :: _ => fd.decode(c)
-          case _      => Left(decoder.Error.ResultSetExhausted)
-        }
-      }
-
-      given TDecoder[TupleData] = TDecoder((identity[TupleData] _).andThen(Right(_)))
-
-      extension [A <: Tuple](self: TDecoder[A]) {
-        def ~[B](fd: decoder.Field[B]): TDecoder[Tuple.Concat[A, Tuple1[B]]] = new TDecoder {
-          override def decode(xs: TupleData): Either[decoder.Error, Concat[A, Tuple1[B]]] =
-            self.decode(xs).flatMap { a =>
-              (xs.drop(a.size) match {
-                case c :: _ => fd.decode(c)
-                case _      => Left(decoder.Error.ResultSetExhausted)
-              }).map { b => a ++ Tuple1(b) }
-            }
-        }
-      }
-
-    }
-  }
-
-  def standbyStatusUpdate(
-      walWritten: Long,
-      walFlushed: Long,
-      walApplied: Long,
-      clock: Long,
-      replyNow: Boolean = false
-  ): Array[Byte] = {
-    val _replyNow: Byte = if (replyNow) 1 else 0
-    val bb = Gen.make(
-      Field.Byte('r'),
-      Field.Int64(walWritten),
-      Field.Int64(walFlushed),
-      Field.Int64(walApplied),
-      Field.Int64(clock),
-      Field.Byte(_replyNow)
-    )
-
-    val arr = new Array[Byte](bb.limit() - bb.position())
-    bb.get(arr)
-    arr
-  }
 }

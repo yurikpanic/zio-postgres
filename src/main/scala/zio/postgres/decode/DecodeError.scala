@@ -1,6 +1,6 @@
-package zio.postgres.decoder
+package zio.postgres.decode
 
-enum Error {
+enum DecodeError {
   case ResultSetExhausted
   case NoRowDescription
   case NullUnexpected

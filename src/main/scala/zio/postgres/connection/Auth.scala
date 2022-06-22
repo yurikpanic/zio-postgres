@@ -1,13 +1,14 @@
 package zio.postgres
 package connection
 
-import com.bolyartech.scram_sasl.client.ScramSaslClientProcessor
-import com.bolyartech.scram_sasl.client.ScramSha256SaslClientProcessor
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets.UTF_8
+
 import zio.*
 import zio.stream.*
 
-import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets.UTF_8
+import com.bolyartech.scram_sasl.client.ScramSaslClientProcessor
+import com.bolyartech.scram_sasl.client.ScramSha256SaslClientProcessor
 
 import protocol.Packet
 

@@ -1,12 +1,13 @@
 package zio.postgres.protocol
 
-import zio.*
-
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
+
 import scala.annotation.meta.field
 import scala.quoted.*
+
+import zio.*
 
 object Gen {
 

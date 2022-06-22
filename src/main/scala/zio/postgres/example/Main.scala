@@ -1,19 +1,19 @@
 package zio.postgres
 package example
 
-import zio.*
-import zio.postgres.protocol.Wal.LogicalReplication
-
 import java.time.Instant
 
+import zio.*
+
+import replication.Wal
+import replication.Wal.LogicalReplication
 import connection.*
-import decoder.Field
+import decode.Field
 import protocol.Packet
 import protocol.Parser
-import protocol.Wal
 
 object Main extends ZIOAppDefault {
-  import decoder.Decoder.*
+  import decode.Decoder.*
 
   val init = for {
     conn <- ZIO.service[Connection]
@@ -35,12 +35,9 @@ object Main extends ZIOAppDefault {
       .simpleQuery(
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '2', publication_names '"testpub"')"""
       )(using {
-        import Wal.Decode.*
-        Wal.Decode(Field.int ~ Field.text.opt ~ Field.int.opt)
+        import replication.Decoder.*
+        replication.Decoder(Field.int ~ Field.text.opt ~ Field.int.opt)
       })
-      .tap { x =>
-        Console.printLine(s"WAL data: $x")
-      }
       .tap {
         case Wal.Message.PrimaryKeepAlive(walEnd, _, _) =>
           proto.standbyStatusUpdate(walEnd, walEnd, walEnd, Instant.now())
