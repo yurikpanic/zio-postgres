@@ -102,19 +102,22 @@ object Main extends ZIOAppDefault {
     _ <- proto.simpleQuery(s"insert into test (id, value, x) values (${id + 2}, 'ccc', ${(id + 2) * 10})").runCollect
     _ <- proto.simpleQuery(s"update test set x = ${(id + 1) * 10} where id = ${id + 1}").runCollect
     _ <- proto.simpleQuery(s"update test set id = ${id + 3}, value = 'CCC' where id = ${id + 2}").runCollect
+    _ <- proto.simpleQuery(s"delete from test where id = ${id + 1}").runCollect
   } yield ()
 
   override def run = {
-    for {
-      args <- getArgs
-      _ <- {
-        if (args.contains("--init")) init
-        else {
-          if (args.contains("--just-stream")) stream
-          else stream zipPar queries
+    ZIO.scoped {
+      for {
+        args <- getArgs
+        _ <- {
+          if (args.contains("--init")) init
+          else {
+            if (args.contains("--just-stream")) stream
+            else stream zipPar queries
+          }
         }
-      }
-    } yield ()
+      } yield ()
+    }
   }.provideSome[Scope & ZIOAppArgs](
     Connection.live,
     Parser.live,

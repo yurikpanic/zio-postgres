@@ -17,7 +17,7 @@ object Connection {
   def init(replication: Option[Packet.ReplicationMode]): ZIO[Config & Scope & Connection, Error, Protocol] =
     ZIO.serviceWithZIO[Connection](_.init(replication))
 
-  enum Error {
+  enum Error extends Throwable {
     case IO(cause: IOException)
     case Parse(error: Packet.ParseError)
     case Auth(error: connection.Auth.Error)
@@ -55,7 +55,7 @@ object Connection {
           .broadcast(2, 100)
         in = packets(0)
           .via(new ZPipeline(Auth.pipeline(q).channel.mapError(Error.Auth(_))))
-          .runFoldWhileZIO(State.Init) {
+          .runFoldWhileScopedZIO(State.Init) {
             case State.Run(_) => false
             case _            => true
           }(handleConn(q, packets(1)))

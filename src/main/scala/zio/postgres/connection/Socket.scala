@@ -58,7 +58,7 @@ object Socket {
       stream = ZStream.repeatZIOChunk(
         for {
           _ <- ZIO.succeed(bb.clear)
-          read <- ZIO.attemptBlockingIO(channel.read(bb))
+          read <- ZIO.attemptBlockingInterrupt(channel.read(bb)).refineToOrDie[IOException]
           _ <- ZIO.succeed(bb.limit(read))
           _ <- ZIO.succeed(bb.rewind)
         } yield Chunk.fromByteBuffer(bb)

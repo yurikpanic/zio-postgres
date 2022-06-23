@@ -24,7 +24,7 @@ trait Protocol {
 
 object Protocol {
 
-  enum Error {
+  enum Error extends Throwable {
     case Backend(fields: Map[Error.Backend.Type, String])
     case Decode(error: decode.DecodeError)
   }
@@ -215,7 +215,7 @@ object Protocol {
         .fromQueue(q)
         .merge(in.map(CmdResp.Resp(_)))
         .runFoldZIO(State.Ready)(handleProto(outQ))
-        .fork
+        .forkScoped
     } yield Live(q)
 
 }

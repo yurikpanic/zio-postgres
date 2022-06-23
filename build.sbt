@@ -2,6 +2,7 @@ val scala3Version = "3.1.2"
 
 lazy val root = project
   .in(file("."))
+  .enablePlugins(JavaAppPackaging)
   .settings(
     name := "zio-postgres",
     organization := "iv",
@@ -20,5 +21,5 @@ lazy val root = project
       "-feature",
       "-Yscala-release:3.0"
     ),
-    run / fork := true
+    fork := true
   )
