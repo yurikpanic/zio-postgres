@@ -55,10 +55,14 @@ object Socket {
       })
 
       bb = ByteBuffer.allocate(512)
-      stream = ZStream.repeatZIOChunk(
+      stream = ZStream.repeatZIOChunkOption(
         for {
           _ <- ZIO.succeed(bb.clear)
-          read <- ZIO.attemptBlockingInterrupt(channel.read(bb)).refineToOrDie[IOException]
+          read <- ZIO.attemptBlockingInterrupt(channel.read(bb)).refineToOrDie[IOException].mapError(Some(_))
+          _ <- {
+            if (read < 0) ZIO.attemptBlockingIO(channel.close()).mapError(Some(_)) *> ZIO.fail(None)
+            else ZIO.unit
+          }
           _ <- ZIO.succeed(bb.limit(read))
           _ <- ZIO.succeed(bb.rewind)
         } yield Chunk.fromByteBuffer(bb)

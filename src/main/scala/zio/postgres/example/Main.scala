@@ -45,6 +45,7 @@ object Main extends ZIOAppDefault {
           proto.standbyStatusUpdate(walEnd, walEnd, walEnd, Instant.now())
         case _ => ZIO.unit
       }
+      .debug("Wal.Message")
       .mapAccumZIO(Map.empty[Int, (String, Option[Int])]) {
         case (
               acc,

@@ -6,6 +6,7 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 import zio.*
+import zio.stream.ZStream.TerminationStrategy
 import zio.stream.*
 
 import connection.*
@@ -27,6 +28,7 @@ object Protocol {
   enum Error extends Throwable {
     case Backend(fields: Map[Error.Backend.Type, String])
     case Decode(error: decode.DecodeError)
+    case ConnectionClosed
   }
 
   object Error {
@@ -213,8 +215,13 @@ object Protocol {
       q <- Queue.unbounded[CmdResp.Cmd]
       _ <- ZStream
         .fromQueue(q)
-        .merge(in.map(CmdResp.Resp(_)))
+        .merge(in.map(CmdResp.Resp(_)), TerminationStrategy.Either)
         .runFoldZIO(State.Ready)(handleProto(outQ))
+        .tap {
+          case State.QueryRespond(Some(reply), _, _) => reply.q.offer(Left(Error.ConnectionClosed))
+          case _                                     => ZIO.unit
+        }
+        .tap(_ => q.shutdown)
         .forkScoped
     } yield Live(q)
 
