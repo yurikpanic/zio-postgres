@@ -5,6 +5,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets.UTF_8
 
+import zio.*
 import zio.postgres.protocol.Packet.FieldFormat
 
 import util.*
@@ -62,45 +63,53 @@ object Field {
 
     def single(using dr: Decoder[Packet.RowDescription, Packet.DataRow]): Decoder[Packet.RowDescription, A] =
       new Decoder {
-        override def isDone(p: Packet): Boolean = dr.isDone(p)
+        override def isDone(p: Packet) = dr.isDone(p)
 
-        override def decode = dr.decode.andThen {
-          case Left(err) => Left(err)
-          case Right(s @ Some(rd), Some(dr)) =>
-            (dr.fields.headOption zip rd.fields.headOption.map(_.format))
-              .toRight(DecodeError.ResultSetExhausted)
-              .flatMap((fd.decode _).tupled)
-              .map(x => s -> Some(x))
-          case Right(s @ Some(_), None) => Right(s -> None)
-          case Right(None, _)           => Left(DecodeError.NoRowDescription)
-        }
+        override def isDefinedAt(p: Packet) = dr.isDefinedAt(p)
+
+        override def decode(s: Option[Packet.RowDescription], p: Packet) =
+          dr.decode(s, p).flatMap {
+            case (s @ Some(rd), Some(dr)) =>
+              ZIO
+                .fromEither(
+                  (dr.fields.headOption zip rd.fields.headOption.map(_.format))
+                    .toRight(DecodeError.ResultSetExhausted)
+                    .flatMap((fd.decode _).tupled)
+                    .map(x => s -> Some(x))
+                )
+            case (s @ Some(_), None) => ZIO.succeed(s -> None)
+            case (None, _)           => ZIO.fail(DecodeError.NoRowDescription)
+          }
+
       }
 
     def ~[B](
         that: Field[B]
     )(using dr: Decoder[Packet.RowDescription, Packet.DataRow]): Decoder[Packet.RowDescription, (A, B)] =
       new Decoder[Packet.RowDescription, (A, B)] {
-        override def isDone(p: Packet): Boolean = dr.isDone(p)
+        override def isDone(p: Packet) = dr.isDone(p)
 
-        override def decode =
-          dr.decode.andThen {
-            case Left(err) => Left(err)
+        override def isDefinedAt(p: Packet) = dr.isDefinedAt(p)
 
-            case Right(s @ Some(rd), Some(dr)) =>
-              dr.fields zip rd.fields match {
-                case (a, af) :: (b, bf) :: _ =>
+        override def decode(s: Option[Packet.RowDescription], p: Packet) = dr.decode(s, p).flatMap {
+          case (s @ Some(rd), Some(dr)) =>
+            dr.fields zip rd.fields match {
+              case (a, af) :: (b, bf) :: _ =>
+                ZIO.fromEither(
                   for {
                     a <- fd.decode(a, af.format)
                     b <- that.decode(b, bf.format)
                   } yield s -> Some(a -> b)
+                )
 
-                case _ => Left(DecodeError.ResultSetExhausted)
-              }
+              case _ => ZIO.fail(DecodeError.ResultSetExhausted)
+            }
 
-            case Right(s @ Some(_), None) => Right(s -> None)
+          case (s @ Some(_), None) => ZIO.succeed(s -> None)
 
-            case Right(None, _) => Left(DecodeError.NoRowDescription)
-          }
+          case (None, _) => ZIO.fail(DecodeError.NoRowDescription)
+        }
+
       }
 
   }

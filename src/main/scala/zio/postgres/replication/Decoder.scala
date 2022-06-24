@@ -1,22 +1,53 @@
 package zio.postgres
 package replication
 
+import java.time.Instant
+
+import zio.*
+
 import decode.{Decoder => GDecoder}
 import decode.DecodeError
 import decode.Field
 import protocol.Packet
+import protocol.Protocol
 
 object Decoder {
   import Wal.LogicalReplication.*
 
-  def apply[A: TupleDecoder, K: TupleDecoder]: GDecoder[_, Wal.Message[A, K]] =
-    new GDecoder[_, Wal.Message[A, K]] {
-      override def decode = { case (s, Packet.CopyData(data)) =>
-        Wal.Message.parse[A, K](data).map(x => s -> Option(x))
+  trait WalGDecoder[A, K] extends GDecoder[A, K] {
+    override def isDefinedAt(p: Packet) = p match {
+      case _: Packet.CopyData => true
+      case _                  => false
+    }
+
+    // TODO: perhaps we should terminate on some errors and maybe some other conditions?
+    override def isDone(p: Packet) = false
+  }
+
+  def message[A: TupleDecoder, K: TupleDecoder](proto: Protocol): GDecoder[Any, Wal.LogicalReplication[A, K]] =
+    new WalGDecoder[Any, Wal.LogicalReplication[A, K]] {
+      override def decode(s: Option[Any], p: Packet) = p match {
+        case Packet.CopyData(data) =>
+          ZIO.fromEither(Wal.Message.parse[A, K](data)).flatMap {
+            case Wal.Message.XLogData(_, _, _, lr) =>
+              ZIO.succeed(s -> Some(lr))
+
+            case Wal.Message.PrimaryKeepAlive(walEnd, _, needReply) =>
+              proto.standbyStatusUpdate(walEnd, walEnd, walEnd, Instant.now()).as(s -> None)
+          }
+        case _ => ZIO.succeed(s -> None)
       }
 
-      // TODO: perhaps we should terminate on some errors and maybe some other conditions?
-      override def isDone(p: Packet): Boolean = false
+    }
+
+  def wal[A: TupleDecoder, K: TupleDecoder]: GDecoder[Any, Wal.Message[A, K]] =
+    new WalGDecoder[Any, Wal.Message[A, K]] {
+      override def decode(s: Option[Any], p: Packet) = p match {
+        case Packet.CopyData(data) =>
+          ZIO.fromEither(Wal.Message.parse[A, K](data).map(x => s -> Option(x)))
+        case _ => ZIO.succeed(s -> None)
+      }
+
     }
 
   extension [A](fd: Field[A]) {

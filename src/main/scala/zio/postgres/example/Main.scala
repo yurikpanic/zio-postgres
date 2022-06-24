@@ -35,52 +35,23 @@ object Main extends ZIOAppDefault {
     proto <- conn.init(Some(Packet.ReplicationMode.Logical))
     res <- proto
       .simpleQuery(
-        """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '2', publication_names '"testpub"')"""
+        """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '1', publication_names '"testpub"')"""
       )(using {
         import replication.Decoder.*
-        replication.Decoder(Field.int ~ Field.text ~ Field.int.opt, Field.int.single)
+        message(proto)(Field.int ~ Field.text ~ Field.int.opt, Field.int.single)
       })
-      .tap {
-        case Wal.Message.PrimaryKeepAlive(walEnd, _, _) =>
-          proto.standbyStatusUpdate(walEnd, walEnd, walEnd, Instant.now())
-        case _ => ZIO.unit
-      }
-      .debug("Wal.Message")
+      .debug("Wal.LogicalReplication")
       .mapAccumZIO(Map.empty[Int, (String, Option[Int])]) {
-        case (
-              acc,
-              Wal.Message.XLogData(
-                _,
-                _,
-                _,
-                LogicalReplication.Insert(_, (id, value, x))
-              )
-            ) =>
+        case (acc, LogicalReplication.Insert(_, (id, value, x))) =>
           val state = acc + (id -> (value -> x))
           Console.printLine(s"State [insert]: $state").as(state -> state)
 
-        case (
-              acc,
-              Wal.Message.XLogData(
-                _,
-                _,
-                _,
-                LogicalReplication.Update(_, key, (id, value, x))
-              )
-            ) =>
+        case (acc, LogicalReplication.Update(_, key, (id, value, x))) =>
           val state = key.fold(acc)(_.fold(identity, identity).pipe(acc - _)) +
             (id -> (value -> x))
           Console.printLine(s"State [update]: $state").as(state -> state)
 
-        case (
-              acc,
-              Wal.Message.XLogData(
-                _,
-                _,
-                _,
-                LogicalReplication.Delete(_, key)
-              )
-            ) =>
+        case (acc, LogicalReplication.Delete(_, key)) =>
           val state = acc - key.fold(identity, identity)
           Console.printLine(s"State [delete]: $state").as(state -> state)
 
