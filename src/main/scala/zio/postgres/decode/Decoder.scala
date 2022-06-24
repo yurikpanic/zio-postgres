@@ -11,7 +11,6 @@ import protocol.Packet
 
 trait Decoder[S, F, A] {
   def decode(s: Option[S], p: F): IO[DecodeError, (Option[S], Option[A])]
-  def isDefinedAt(p: F): Boolean
   def isDone(p: F): Boolean
 }
 
@@ -25,12 +24,6 @@ object Decoder {
         case _                         => ZIO.succeed(s -> None)
       }
 
-      override def isDefinedAt(p: Packet): Boolean = p match {
-        case _: Packet.DataRow        => true
-        case _: Packet.RowDescription => true
-        case _                        => false
-      }
-
       override def isDone(p: Packet) = p match {
         case Packet.CommandComplete(_) => true
         case _                         => false
@@ -42,8 +35,6 @@ object Decoder {
     def ~[B](fd: Field[B]): Decoder[S, F, Tuple.Concat[A, Tuple1[B]]] =
       new Decoder {
         override def isDone(p: F) = d.isDone(p)
-
-        override def isDefinedAt(p: F) = d.isDefinedAt(p)
 
         override def decode(s: Option[S], p: F) =
           d.decode(s, p).flatMap {

@@ -15,11 +15,6 @@ object Decoder {
   import Wal.LogicalReplication.*
 
   trait WalGDecoder[A, K] extends GDecoder[A, Packet, K] {
-    override def isDefinedAt(p: Packet) = p match {
-      case _: Packet.CopyData => true
-      case _                  => false
-    }
-
     // TODO: perhaps we should terminate on some errors and maybe some other conditions?
     override def isDone(p: Packet) = false
   }
@@ -45,6 +40,7 @@ object Decoder {
       override def decode(s: Option[Any], p: Packet) = p match {
         case Packet.CopyData(data) =>
           ZIO.fromEither(Wal.Message.parse[A, K](data).map(x => s -> Option(x)))
+
         case _ => ZIO.succeed(s -> None)
       }
 

@@ -179,7 +179,7 @@ object Protocol {
         ZIO.succeed(State.QueryRespond(rq, s, next ::: (cmd :: Nil)))
 
       // send current query result, the state is kept the same
-      case (st @ State.QueryRespond(Some(reply), s, next), Resp(packet)) if reply.decoder.isDefinedAt(packet) =>
+      case (st @ State.QueryRespond(Some(reply), s, next), Resp(packet)) if !reply.decoder.isDone(packet) =>
         reply.decoder.decode(s, packet).mapError(Error.Decode(_)).either.flatMap {
           case Left(err)             => reply.q.offer(Left(err)).as(st)
           case Right(s, a @ Some(_)) => reply.q.offer(Right(a)).as(st.copy(state = s))

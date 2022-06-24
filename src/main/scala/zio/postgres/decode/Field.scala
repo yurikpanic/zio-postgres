@@ -67,8 +67,6 @@ object Field {
       new Decoder {
         override def isDone(p: Packet) = dr.isDone(p)
 
-        override def isDefinedAt(p: Packet) = dr.isDefinedAt(p)
-
         override def decode(s: Option[Packet.RowDescription], p: Packet) =
           dr.decode(s, p).flatMap {
             case (s @ Some(rd), Some(dr)) =>
@@ -92,8 +90,6 @@ object Field {
     ): Decoder[Packet.RowDescription, Packet, (A, B)] =
       new Decoder[Packet.RowDescription, Packet, (A, B)] {
         override def isDone(p: Packet) = dr.isDone(p)
-
-        override def isDefinedAt(p: Packet) = dr.isDefinedAt(p)
 
         override def decode(s: Option[Packet.RowDescription], p: Packet) = dr.decode(s, p).flatMap {
           case (s @ Some(rd), Some(dr)) =>
