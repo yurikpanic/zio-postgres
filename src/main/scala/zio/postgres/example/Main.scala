@@ -33,7 +33,7 @@ object Main extends ZIOAppDefault {
   val stream = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(Some(Packet.ReplicationMode.Logical))
-    res <- proto
+    _ <- proto
       .simpleQuery(
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '1', publication_names '"testpub"')"""
       )(using {
@@ -59,7 +59,6 @@ object Main extends ZIOAppDefault {
           ZIO.succeed(acc -> acc)
       }
       .runCollect
-    _ <- Console.printLine(s"Stream result: $res") // Not expected to reach here
   } yield ()
 
   val queries = for {

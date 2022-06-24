@@ -2,6 +2,8 @@
 
 A Scala/ZIO native implementation of PostgreSQL protocol.
 
+[![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner-direct-single.svg)](https://stand-with-ukraine.pp.ua)
+
 ## Motivation
 
 The implementation is intended to be an async ZIO based implementation of postgres client.
@@ -23,7 +25,7 @@ To stream the changes from the database table:
 
 A complete example can be found in [Main.scala](src/main/scala/zio/postgres/example/Main.scala).
 
-A prerequisite to run the example Main files above are:
+A prerequisite to run the example Main file above are:
 - `test` database
 - owned by user `test` with password `test`
 - `sbt "runMain zio.postgres.example.Main --init"` - this creates a table, publication and replication slot
