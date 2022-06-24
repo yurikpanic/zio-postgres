@@ -61,7 +61,9 @@ object Field {
       override def sDecode(data: Option[String]): Either[DecodeError, Option[A]] = (fd.sDecode _).andThen(makeOpt)(data)
     }
 
-    def single(using dr: Decoder[Packet.RowDescription, Packet.DataRow]): Decoder[Packet.RowDescription, A] =
+    def single(using
+        dr: Decoder[Packet.RowDescription, Packet, Packet.DataRow]
+    ): Decoder[Packet.RowDescription, Packet, A] =
       new Decoder {
         override def isDone(p: Packet) = dr.isDone(p)
 
@@ -85,8 +87,10 @@ object Field {
 
     def ~[B](
         that: Field[B]
-    )(using dr: Decoder[Packet.RowDescription, Packet.DataRow]): Decoder[Packet.RowDescription, (A, B)] =
-      new Decoder[Packet.RowDescription, (A, B)] {
+    )(using
+        dr: Decoder[Packet.RowDescription, Packet, Packet.DataRow]
+    ): Decoder[Packet.RowDescription, Packet, (A, B)] =
+      new Decoder[Packet.RowDescription, Packet, (A, B)] {
         override def isDone(p: Packet) = dr.isDone(p)
 
         override def isDefinedAt(p: Packet) = dr.isDefinedAt(p)

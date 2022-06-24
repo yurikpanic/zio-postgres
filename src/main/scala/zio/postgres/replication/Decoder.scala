@@ -14,7 +14,7 @@ import protocol.Protocol
 object Decoder {
   import Wal.LogicalReplication.*
 
-  trait WalGDecoder[A, K] extends GDecoder[A, K] {
+  trait WalGDecoder[A, K] extends GDecoder[A, Packet, K] {
     override def isDefinedAt(p: Packet) = p match {
       case _: Packet.CopyData => true
       case _                  => false
@@ -24,7 +24,7 @@ object Decoder {
     override def isDone(p: Packet) = false
   }
 
-  def message[A: TupleDecoder, K: TupleDecoder](proto: Protocol): GDecoder[Any, Wal.LogicalReplication[A, K]] =
+  def message[A: TupleDecoder, K: TupleDecoder](proto: Protocol): GDecoder[Any, Packet, Wal.LogicalReplication[A, K]] =
     new WalGDecoder[Any, Wal.LogicalReplication[A, K]] {
       override def decode(s: Option[Any], p: Packet) = p match {
         case Packet.CopyData(data) =>
@@ -40,7 +40,7 @@ object Decoder {
 
     }
 
-  def wal[A: TupleDecoder, K: TupleDecoder]: GDecoder[Any, Wal.Message[A, K]] =
+  def wal[A: TupleDecoder, K: TupleDecoder]: GDecoder[Any, Packet, Wal.Message[A, K]] =
     new WalGDecoder[Any, Wal.Message[A, K]] {
       override def decode(s: Option[Any], p: Packet) = p match {
         case Packet.CopyData(data) =>

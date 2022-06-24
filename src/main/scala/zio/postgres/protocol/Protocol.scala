@@ -13,7 +13,7 @@ import connection.*
 import decode.Decoder
 
 trait Protocol {
-  def simpleQuery[S, A](query: String)(using Decoder[S, A]): ZStream[Any, Protocol.Error, A]
+  def simpleQuery[S, A](query: String)(using Decoder[S, Packet, A]): ZStream[Any, Protocol.Error, A]
   def standbyStatusUpdate(
       walWritten: Long,
       walFlushed: Long,
@@ -88,7 +88,7 @@ object Protocol {
 
     object Cmd {
 
-      final case class Reply[S, A](q: Queue[Either[Protocol.Error, Option[A]]], decoder: Decoder[S, A])
+      final case class Reply[S, A](q: Queue[Either[Protocol.Error, Option[A]]], decoder: Decoder[S, Packet, A])
 
       enum Kind {
         case SimpleQuery[S, A](query: String, reply: Reply[S, A])
@@ -115,10 +115,10 @@ object Protocol {
     import CmdResp._
     import CmdResp.Cmd._
 
-    override def simpleQuery[S, A](query: String)(using Decoder[S, A]): ZStream[Any, Protocol.Error, A] =
+    override def simpleQuery[S, A](query: String)(using Decoder[S, Packet, A]): ZStream[Any, Protocol.Error, A] =
       for {
         respQ <- ZStream.fromZIO(Queue.bounded[Either[Protocol.Error, Option[A]]](10))
-        _ <- ZStream.fromZIO(q.offer(Cmd(Kind.SimpleQuery(query, Reply(respQ, summon[Decoder[S, A]])))))
+        _ <- ZStream.fromZIO(q.offer(Cmd(Kind.SimpleQuery(query, Reply(respQ, summon[Decoder[S, Packet, A]])))))
         res <- ZStream
           .fromQueueWithShutdown(respQ)
           .flatMap {

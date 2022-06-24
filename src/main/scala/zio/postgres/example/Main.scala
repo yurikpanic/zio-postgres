@@ -74,6 +74,12 @@ object Main extends ZIOAppDefault {
     _ <- proto.simpleQuery(s"update test set x = ${(id + 1) * 10} where id = ${id + 1}").runCollect
     _ <- proto.simpleQuery(s"update test set id = ${id + 3}, value = 'CCC' where id = ${id + 2}").runCollect
     _ <- proto.simpleQuery(s"delete from test where id = ${id + 1}").runCollect
+    res <- proto
+      .simpleQuery(s"select id, value, x from test where id >= ${id} and id <= ${id + 3}")(
+        using Field.int ~ Field.text ~ Field.int.opt
+      )
+      .runCollect
+    _ <- ZIO.foreach(res)(x => Console.printLine(s"DB state: $x"))
   } yield ()
 
   override def run = {
