@@ -77,7 +77,10 @@ object Auth {
           }
 
           val sender = new ScramSaslClientProcessor.Sender {
-            override def sendMessage(msg: String): Unit = rt.unsafeRunAsync(msgQ.offer(msg))
+            override def sendMessage(msg: String): Unit =
+              Unsafe.unsafe { implicit u: Unsafe =>
+                rt.unsafe.run(msgQ.offer(msg))
+              }
           }
 
           ZChannel.fromZIO {

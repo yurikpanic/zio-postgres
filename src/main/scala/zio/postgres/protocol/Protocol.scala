@@ -6,11 +6,11 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 import zio.*
-import zio.stream.ZStream.TerminationStrategy
 import zio.stream.*
 
 import connection.*
 import decode.Decoder
+import zio.stream.ZStream.HaltStrategy
 
 trait Protocol {
   def simpleQuery[S, A](query: String)(using Decoder[S, Packet, A]): ZStream[Any, Protocol.Error, A]
@@ -214,7 +214,7 @@ object Protocol {
       q <- Queue.unbounded[CmdResp.Cmd]
       _ <- ZStream
         .fromQueue(q)
-        .merge(in.map(CmdResp.Resp(_)), TerminationStrategy.Either)
+        .merge(in.map(CmdResp.Resp(_)), HaltStrategy.Either)
         .runFoldZIO(State.Ready)(handleProto(outQ))
         .tap {
           case State.QueryRespond(Some(reply), _, _) => reply.q.offer(Left(Error.ConnectionClosed))

@@ -50,11 +50,11 @@ object Connection {
         _ <- ZStream.fromQueue(q).run(conn._1).mapError(Error.IO(_)).forkScoped
         packets <- conn._2
           .mapError(Error.IO(_))
-          .via(new ZPipeline(Parser.pipeline.channel.mapError(Error.Parse(_))))
+          .via(ZPipeline.fromChannel(Parser.pipeline.channel.mapError(Error.Parse(_))))
           .debug("packet")
           .broadcast(2, 100)
         in = packets(0)
-          .via(new ZPipeline(Auth.pipeline(q).channel.mapError(Error.Auth(_))))
+          .via(ZPipeline.fromChannel(Auth.pipeline(q).channel.mapError(Error.Auth(_))))
           .runFoldWhileScopedZIO(State.Init) {
             case State.Run(_) => false
             case _            => true

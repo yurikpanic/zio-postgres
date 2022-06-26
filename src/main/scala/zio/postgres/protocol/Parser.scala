@@ -65,7 +65,7 @@ object Parser {
             done = _ => ZChannel.unit
           )
 
-        new ZPipeline(decode(Chunk.empty, State.WaitTypeAndLength))
+        ZPipeline.fromChannel(decode(Chunk.empty, State.WaitTypeAndLength))
       }
   }
 
