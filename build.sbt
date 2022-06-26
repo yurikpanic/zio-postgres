@@ -5,8 +5,7 @@ lazy val root = project
   .enablePlugins(JavaAppPackaging)
   .settings(
     name := "zio-postgres",
-    organization := "iv",
-    version := "0.1.0-SNAPSHOT",
+    organization := "ivyshnevskyi",
     scalaVersion := scala3Version,
     libraryDependencies ++= Seq(
       "org.scalameta" %% "munit" % "0.7.29" % Test,
