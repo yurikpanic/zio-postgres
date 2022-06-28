@@ -40,8 +40,7 @@ lazy val root = project
       "-deprecation",
       "-encoding",
       "UTF-8",
-      "-feature",
-      "-Yscala-release:3.0"
+      "-feature"
     ),
     fork := true
   )

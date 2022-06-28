@@ -7,27 +7,44 @@ import scala.util.chaining.*
 
 import zio.*
 
-import replication.Wal
-import replication.Wal.LogicalReplication
 import connection.*
+import ddl.Migration
 import decode.Field
 import protocol.Packet
 import protocol.Parser
+import replication.Wal
+import replication.Wal.LogicalReplication
 
 object Main extends ZIOAppDefault {
   import decode.Decoder.*
 
+  val m = {
+    import ddl.*
+
+    migration(
+      createTable(
+        "test".public,
+        column("id", Type.Int, primaryKey = true) ::
+          column("value", Type.Text, nullable = false) ::
+          Nil
+      ),
+      alterTable("test".public, addColumn("y", Type.Int)),
+      alterTable("test".public, renameColumn("y", "x"))
+    )
+  }
+
   val init = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(None)
-    _ <- proto.simpleQuery("create table test(id integer primary key, value text not null, x integer)").runCollect
-    _ <- proto.simpleQuery("create publication testpub for table test").runCollect
-    slot <- proto
-      .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(
-        using Field.text ~ Field.text
-      )
-      .runCollect
-    _ <- Console.printLine(s"Replication slot created: $slot")
+    // _ <- sch.migrate().provide(ZLayer.succeed(proto))
+    // _ <- proto.simpleQuery("create table test(id integer primary key, value text not null, x integer)").runCollect
+    // _ <- proto.simpleQuery("create publication testpub for table test").runCollect
+    // slot <- proto
+    //   .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(
+    //     using Field.text ~ Field.text
+    //   )
+    //   .runCollect
+    // _ <- Console.printLine(s"Replication slot created: $slot")
   } yield ()
 
   val stream = for {

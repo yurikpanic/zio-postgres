@@ -6,11 +6,11 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 
 import zio.*
+import zio.stream.ZStream.HaltStrategy
 import zio.stream.*
 
 import connection.*
 import decode.Decoder
-import zio.stream.ZStream.HaltStrategy
 
 trait Protocol {
   def simpleQuery[S, A](query: String)(using Decoder[S, Packet, A]): ZStream[Any, Protocol.Error, A]
