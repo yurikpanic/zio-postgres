@@ -8,7 +8,7 @@ import zio.*
 
 import protocol.Protocol
 
-inline def migration(inline ops: Migration.Operation*): Migration = Migration(ops.toList)
+inline def migration(m: Migration => Migration) = m(Fix(Migration.InitF))
 
 inline def createTable(
     inline name: Schema.Relation.Name,
@@ -16,8 +16,9 @@ inline def createTable(
     inline constrains: List[Schema.Table.Constraint] = Nil,
     inline ifNotExists: Boolean = false,
     inline kind: Schema.Table.Kind = Schema.Table.Kind.Ordinary
-): Migration.Operation =
-  Migration.Operation.Create(Schema.Table(name, columns, constrains, ifNotExists, kind))
+): Migration => Migration = { (prev: Migration) =>
+  Migration.CreateF[Migration](prev, Schema.Table(name, columns, constrains, ifNotExists, kind))
+}.andThen(Fix(_))
 
 inline def column(
     inline name: String,
@@ -30,7 +31,9 @@ inline def column(
 inline def alterTable(
     inline name: Schema.Relation.Name,
     inline op: Migration.Alter.Table.Operation
-): Migration.Operation = Migration.Operation.Alter(Migration.Alter.Target.Table(name, op))
+): Migration => Migration = { (prev: Migration) =>
+  Migration.AlterF(prev, Migration.Alter.Target.Table(name, op))
+}.andThen(Fix(_))
 
 inline def addColumn(
     inline name: String,

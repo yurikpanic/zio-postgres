@@ -27,15 +27,18 @@ object Main extends ZIOAppDefault {
         column("id", Type.Int, primaryKey = true) ::
           column("value", Type.Text, nullable = false) ::
           Nil
-      ),
-      alterTable("test".public, addColumn("y", Type.Int)),
-      alterTable("test".public, renameColumn("y", "x"))
+      ) andThen
+        alterTable("test".public, addColumn("y", Type.Int)) andThen
+        alterTable("test".public, renameColumn("y", "x"))
     )
   }
+
+  val schOrError = m.toSchema
 
   val init = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(None)
+    sch <- ZIO.fromEither(schOrError)
     // _ <- sch.migrate().provide(ZLayer.succeed(proto))
     // _ <- proto.simpleQuery("create table test(id integer primary key, value text not null, x integer)").runCollect
     // _ <- proto.simpleQuery("create publication testpub for table test").runCollect
