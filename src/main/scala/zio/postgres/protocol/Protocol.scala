@@ -25,6 +25,9 @@ trait Protocol {
 
 object Protocol {
 
+  def simpleQuery[S, A](query: String)(using Decoder[S, Packet, A]): ZStream[Protocol, Protocol.Error, A] =
+    ZStream.serviceWithStream[Protocol](_.simpleQuery[S, A](query))
+
   enum Error extends Throwable {
     case Backend(fields: Map[Error.Backend.Type, String])
     case Decode(error: decode.DecodeError)

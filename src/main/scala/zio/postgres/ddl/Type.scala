@@ -5,3 +5,13 @@ enum Type {
   case Long
   case Text
 }
+
+object Type {
+  extension (t: Type) {
+    def toSql: String = t match {
+      case Int  => " integer "
+      case Long => " bigint "
+      case Text => " text "
+    }
+  }
+}

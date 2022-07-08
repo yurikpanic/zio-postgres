@@ -11,7 +11,6 @@ object Schema {
       name: Relation.Name,
       columns: List[Table.Column],
       constrains: List[Table.Constraint],
-      ifNotExists: Boolean,
       kind: Table.Kind
   ) extends Relation
 
@@ -22,7 +21,22 @@ object Schema {
       case Unlogged
     }
 
+    extension (k: Kind) {
+      def toSql: String = k match {
+        case Kind.Ordinary  => ""
+        case Kind.Temporary => " TEMPORARY "
+        case Kind.Unlogged  => " UNLOGGED "
+      }
+    }
+
     final case class Column(name: String, dataType: Type, primaryKey: Boolean = false, nullable: Boolean = true)
+
+    extension (c: Column) {
+      def toSql: String =
+        s"${c.name} ${c.dataType.toSql}${if (c.nullable) "" else " not null "}${
+            if (c.primaryKey) " primary key " else ""
+          }"
+    }
 
     sealed trait Constraint {
       def name: Option[String]
@@ -38,6 +52,16 @@ object Schema {
 
       final case class Named(_name: String, c: Unnamed) extends Constraint {
         override def name: Option[String] = Some(_name)
+      }
+
+      extension (c: Constraint) {
+        def toSql: String = c match {
+          case Unique(cols)     => s" unique (${cols.mkString(", ")}) "
+          case PrimaryKey(cols) => s" primary key (${cols.mkString(", ")}) "
+          case ForeignKey(cols, refTable, refCols) =>
+            s" foreign key (${cols.mkString(", ")}) references $refTable (${refCols.mkString(", ")}) "
+          case Named(name, constr) => s" constraint $name ${constr.toSql} "
+        }
       }
     }
 
@@ -70,12 +94,21 @@ object Schema {
         else Left(UpdateError.ColumnDoesNotExist(table.name, name))
       }
 
+      def createQuery: String =
+        s"""
+          create ${table.kind.toSql} table ${table.name.toSql} (${(table.columns.map(_.toSql) :::
+            table.constrains.map(_.toSql)).mkString(", ")})
+        """
     }
 
   }
 
   object Relation {
     final case class Name(name: String, namespace: String = "public")
+
+    extension (n: Name) {
+      def toSql: String = s"${n.namespace}.${n.name}"
+    }
   }
 
   enum UpdateError {

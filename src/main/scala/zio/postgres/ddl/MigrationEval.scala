@@ -1,8 +1,11 @@
-package zio.postgres.ddl
+package zio.postgres
+package ddl
 
+import zio.*
 import zio.prelude.*
 
 import eval.*
+import protocol.Protocol
 
 object MigrationEval {
   import Migration.*
@@ -80,7 +83,7 @@ object MigrationEval {
 
     case AlterF(sch, Alter.Target.Table(name, op)) => sch.flatMap(_.alterTable(name, op))
 
-    // TODO: take flag into account
+    // TODO: take the flag into account
     case DropF(sch, Migration.Drop.Target.Table(name, _)) =>
       sch.flatMap(_.withoutTable(name).left.map(ValidationError.SchemaUpdate(_)))
     case DropF(sch, Migration.Drop.Target.Tables(names, _)) =>
@@ -88,6 +91,36 @@ object MigrationEval {
         acc.flatMap(_.withoutTable(name).left.map(ValidationError.SchemaUpdate(_)))
       }
 
+    // Assume raw ops does not affect the schema
+    case RawF(sch, _) => sch
+
     case _ => Left(ValidationError.Oops)
+  }
+
+  def evalToSql: Algebra[Migration.MigrationF, List[String]] = {
+    case InitF                                        => Nil
+    case CreateF(prev, table: Schema.Table)           => table.createQuery :: prev
+    case AlterF(prev, alterTable: Alter.Target.Table) => alterTable.query :: prev
+
+    case DropF(prev, dropTable: Migration.Drop.Target.Table)   => dropTable.query :: prev
+    case DropF(prev, dropTables: Migration.Drop.Target.Tables) => dropTables.query :: prev
+
+    case RawF(prev, sql) => sql :: prev
+  }
+
+  def evalToApply: Algebra[Migration.MigrationF, ZIO[Protocol, ApplyError, Unit]] = {
+
+    def run(q: String) = Protocol.simpleQuery(q).runCollect.unit.mapError(ApplyError.RunQuery(q, _))
+
+    {
+      case InitF                                        => ZIO.succeed(())
+      case CreateF(prev, table: Schema.Table)           => prev *> run(table.createQuery)
+      case AlterF(prev, alterTable: Alter.Target.Table) => prev *> run(alterTable.query)
+
+      case DropF(prev, dropTable: Migration.Drop.Target.Table)   => prev *> run(dropTable.query)
+      case DropF(prev, dropTables: Migration.Drop.Target.Tables) => prev *> run(dropTables.query)
+
+      case RawF(prev, sql) => prev *> run(sql)
+    }
   }
 }

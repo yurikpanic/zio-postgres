@@ -29,7 +29,9 @@ object Main extends ZIOAppDefault {
           Nil
       ) andThen
         alterTable("test".public, addColumn("y", Type.Int)) andThen
-        alterTable("test".public, renameColumn("y", "x"))
+        alterTable("test".public, renameColumn("y", "x")) andThen
+        raw("create publication testpub for table test") andThen
+        raw("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")
     )
   }
 
@@ -38,16 +40,11 @@ object Main extends ZIOAppDefault {
   val init = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(None)
-    sch <- ZIO.fromEither(schOrError)
-    // _ <- sch.migrate().provide(ZLayer.succeed(proto))
-    // _ <- proto.simpleQuery("create table test(id integer primary key, value text not null, x integer)").runCollect
-    // _ <- proto.simpleQuery("create publication testpub for table test").runCollect
-    // slot <- proto
-    //   .simpleQuery("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")(
-    //     using Field.text ~ Field.text
-    //   )
-    //   .runCollect
-    // _ <- Console.printLine(s"Replication slot created: $slot")
+    sch <- ZIO.fromEither(schOrError) // this validates the migration before trying to actually apply it
+    _ <- Console.printLine(s"Schema: $sch")
+    _ <- Console.printLine("Migration:")
+    _ <- ZIO.foreach(m.toSql)(Console.printLine(_))
+    _ <- m.toApply.provide(ZLayer.succeed(proto))
   } yield ()
 
   val stream = for {
