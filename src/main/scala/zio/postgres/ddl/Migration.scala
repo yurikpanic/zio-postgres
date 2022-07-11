@@ -7,7 +7,7 @@ import zio.prelude.*
 import protocol.Protocol
 import Schema.*
 
-type Migration = Fix[Migration.MigrationF]
+type Migration = eval.Fix[Migration.MigrationF]
 
 object Migration {
 

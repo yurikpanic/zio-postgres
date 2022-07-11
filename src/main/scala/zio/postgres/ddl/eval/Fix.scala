@@ -1,4 +1,4 @@
-package zio.postgres.ddl
+package zio.postgres.ddl.eval
 
 final case class Fix[F[_]](unfix: F[Fix[F]])
 

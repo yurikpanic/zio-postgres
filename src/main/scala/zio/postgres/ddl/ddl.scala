@@ -6,6 +6,7 @@ import scala.quoted.*
 
 import zio.*
 
+import eval.Fix
 import protocol.Protocol
 
 inline def migration(m: Migration => Migration) = m(Fix(Migration.InitF))
