@@ -97,28 +97,6 @@ object MigrationEval {
     case _ => Left(ValidationError.Oops)
   }
 
-  inline def evalToSchema1(inline m: Migration.MigrationF[Schema]): Schema =
-    inline m match {
-      case InitF => Schema.empty
-      case CreateF(sch, table: Schema.Table) =>
-        sch.withTable(table).fold(throw _, identity)
-
-      case AlterF(sch, Alter.Target.Table(name, op)) => sch.alterTable(name, op).fold(throw _, identity)
-
-      // TODO: take the flag into account
-      case DropF(sch, Migration.Drop.Target.Table(name, _)) =>
-        sch.withoutTable(name).left.map(ValidationError.SchemaUpdate(_)).fold(throw _, identity)
-      case DropF(sch, Migration.Drop.Target.Tables(names, _)) =>
-        names.foldLeft[Schema](sch) { (acc, name) =>
-          acc.withoutTable(name).left.map(ValidationError.SchemaUpdate(_)).fold(throw _, identity)
-        }
-
-      // Assume raw ops does not affect the schema
-      case RawF(sch, _) => sch
-
-      case _ => throw ValidationError.Oops
-    }
-
   def evalToSql: Algebra[Migration.MigrationF, List[String]] = {
     case InitF                                        => Nil
     case CreateF(prev, table: Schema.Table)           => table.createQuery :: prev

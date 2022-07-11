@@ -7,7 +7,7 @@ import zio.prelude.*
 import protocol.Protocol
 import Schema.*
 
-type RunQuery = Fix[Migration.MigrationF]
+type Migration = Fix[Migration.MigrationF]
 
 object Migration {
 
@@ -20,7 +20,7 @@ object Migration {
     case RunQuery(query: String, err: Protocol.Error)
   }
 
-  extension (m: RunQuery) {
+  extension (m: Migration) {
     def toSchema: Either[ValidationError, Schema] = {
       import eval.*
       cata(MigrationEval.evalToSchema)(m)
