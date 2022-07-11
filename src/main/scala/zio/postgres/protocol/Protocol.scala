@@ -181,6 +181,13 @@ object Protocol {
       case (State.QueryRespond(rq, s, next), cmd @ Cmd(_)) =>
         ZIO.succeed(State.QueryRespond(rq, s, next ::: (cmd :: Nil)))
 
+      // error happend executing previous query, we have no new query to run
+      case (State.QueryRespond(reply, _, Nil), Resp(Packet.Error(fields))) =>
+        backendError(reply.map(_.q), fields).as(State.Ready)
+      // error happend executing previous query, we already have a query to run next
+      case (State.QueryRespond(reply, _, h :: tl), Resp(Packet.Error(fields))) =>
+        sendCommand(outQ, h.kind) *> backendError(reply.map(_.q), fields).as(State.QueryRespond(h.kind.reply, None, tl))
+
       // send current query result, the state is kept the same
       case (st @ State.QueryRespond(Some(reply), s, next), Resp(packet)) if !reply.decoder.isDone(packet) =>
         reply.decoder.decode(s, packet).mapError(Error.Decode(_)).either.flatMap {
@@ -193,13 +200,6 @@ object Protocol {
       case (st @ State.QueryRespond(Some(reply), _, next), Resp(packet)) if reply.decoder.isDone(packet) =>
         reply.q.offer(Right(None)).as(State.QueryRespond(None, None, next))
 
-      // error happend executing previous query, we have no new query to run
-      case (State.QueryRespond(reply, _, Nil), Resp(Packet.Error(fields))) =>
-        backendError(reply.map(_.q), fields).as(State.Ready)
-      // error happend executing previous query, we already have a query to run next
-      case (State.QueryRespond(reply, _, h :: tl), Resp(Packet.Error(fields))) =>
-        sendCommand(outQ, h.kind) *> backendError(reply.map(_.q), fields).as(State.QueryRespond(h.kind.reply, None, tl))
-
       // previous query is complete, we have nothing to run next
       case (State.QueryRespond(_, _, Nil), Resp(Packet.ReadyForQuery(_))) =>
         ZIO.succeed(State.Ready)
@@ -208,7 +208,7 @@ object Protocol {
         sendCommand(outQ, h.kind).as(State.QueryRespond(h.kind.reply, s, tl))
 
       // ignore any other packets
-      case (s, _) => ZIO.succeed(s)
+      case (s, x) => ZIO.succeed(s)
     }
   }
 

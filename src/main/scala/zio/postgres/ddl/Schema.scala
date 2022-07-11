@@ -111,7 +111,7 @@ object Schema {
     }
   }
 
-  enum UpdateError {
+  enum UpdateError extends Throwable {
     case RealtionAlreadyExists(name: Relation.Name)
     case RealtionDoesNotExist(name: Relation.Name)
     case ColumnAlreadyExists(name: Relation.Name, column: String)

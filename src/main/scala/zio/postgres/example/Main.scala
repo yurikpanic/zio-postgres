@@ -18,7 +18,7 @@ import replication.Wal.LogicalReplication
 object Main extends ZIOAppDefault {
   import decode.Decoder.*
 
-  val m = {
+  inline def m = {
     import ddl.*
 
     migration(
