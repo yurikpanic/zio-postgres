@@ -1,202 +1,266 @@
-package zio.postgres
-package ddl
+package zio.postgres.ddl
+
+import scala.compiletime.*
+import scala.compiletime.ops.string.*
+import scala.deriving.Mirror
 
 import zio.*
+import zio.postgres.protocol.Protocol
 import zio.prelude.*
 
-import protocol.Protocol
-import Schema.*
-
-type Migration = eval.Fix[Migration.MigrationF]
+final case class Migration(queries: List[String])
 
 object Migration {
 
-  enum ValidationError extends Throwable {
-    case SchemaUpdate(err: Schema.UpdateError)
-    case Oops // TODO: this marks unimplemented parts - remove it once all is done
-  }
+  val empty = Migration(Nil)
 
   enum ApplyError extends Throwable {
     case RunQuery(query: String, err: Protocol.Error)
   }
 
   extension (m: Migration) {
-    def toSchema: Either[ValidationError, Schema] = {
-      import eval.*
-      cata(MigrationEval.evalToSchema)(m)
-    }
+    def toApply: ZIO[Protocol, ApplyError, Unit] =
+      ZIO.foreach(m.queries)(q => Protocol.simpleQuery(q).runCollect.mapError(ApplyError.RunQuery(q, _))).unit
+  }
 
-    def toApply: ZIO[Protocol, ApplyError, Unit] = {
-      import eval.*
-      cata(MigrationEval.evalToApply)(m)
-    }
+  given Associative[Migration] = new {
+    def combine(l: => Migration, r: => Migration): Migration = Migration(l.queries ::: r.queries)
+  }
 
-    def toSql: List[String] = {
-      import eval.*
-      cata(MigrationEval.evalToSql)(m).reverse
+  sealed trait Column[Name <: String, Type]
+
+  object Column {
+
+    type FromNamesAndTypes[Names <: Tuple, Types <: Tuple] <: Tuple =
+      (Names, Types) match {
+        case (EmptyTuple, EmptyTuple) => EmptyTuple
+        case (n *: nTail, t *: tTail) => Column[n, t] *: FromNamesAndTypes[nTail, tTail]
+      }
+
+    type TypeForName[Name <: String, Columns <: Tuple] =
+      Columns match {
+        case EmptyTuple        => Nothing
+        case Column[Name, tpe] => tpe
+        case _ *: tl           => TypeForName[Name, tl]
+      }
+
+    type Names[Columns <: Tuple] <: Tuple =
+      Columns match {
+        case EmptyTuple            => EmptyTuple
+        case Column[name, _] *: tl => name *: Names[tl]
+      }
+
+    inline def pgTypes[Columns <: Tuple]: Map[String, PgType[?]] =
+      inline erasedValue[Columns] match {
+        case _: EmptyTuple =>
+          Map.empty
+
+        case _: (Column[name, tpe] *: tl) =>
+          pgTypes[tl] + (constValue[name] -> summonInline[PgType[tpe]])
+      }
+
+    inline def ctors[Columns <: Tuple]: List[(String, PgType[?])] =
+      inline erasedValue[Columns] match {
+        case _: EmptyTuple => Nil
+
+        case _: (Column[name, tpe] *: tl) =>
+          (constValue[name] -> summonInline[PgType[tpe]]) :: ctors[tl]
+      }
+  }
+
+  sealed trait NamedTable[Name <: String, T <: Product]
+
+  object NamedTable {
+    type FromNamesAndTypes[Names <: Tuple, Types <: Tuple] <: Tuple =
+      (Names, Types) match {
+        case (EmptyTuple, EmptyTuple)    => EmptyTuple
+        case (n *: nTl, Table[t] *: tTl) => NamedTable[n, t] *: FromNamesAndTypes[nTl, tTl]
+        case (_ *: nTl, _ *: tTl)        => FromNamesAndTypes[nTl, tTl]
+      }
+
+    type Names[NamedTables <: Tuple] <: Tuple =
+      NamedTables match {
+        case EmptyTuple                => EmptyTuple
+        case NamedTable[name, _] *: tl => name *: Names[tl]
+      }
+
+    inline def ctors[NamedTables <: Tuple]: Map[String, TableCtor[?, ?]] =
+      inline erasedValue[NamedTables] match {
+        case _: EmptyTuple => Map.empty
+        case _: (NamedTable[name, table] *: tl) =>
+          ctors[tl] + (constValue[name] -> summonInline[TableCtor[name, table]])
+      }
+
+    inline def migratorTo[NameFrom <: String, From <: Product, ToNamesTables <: Tuple]
+        : Map[(String, String), TableMigrator[?, ?, ?, ?]] =
+      inline erasedValue[ToNamesTables] match {
+        case _: EmptyTuple => Map.empty
+        case _: (NamedTable[NameFrom, table] *: tl) =>
+          Map(
+            (constValue[NameFrom] -> constValue[NameFrom]) -> summonInline[
+              TableMigrator[NameFrom, From, NameFrom, table]
+            ]
+          )
+        case _: (NamedTable[_, _] *: tl) => migratorTo[NameFrom, From, tl]
+      }
+
+    inline def migrators[FromNamedTables <: Tuple, ToNamesTables <: Tuple]
+        : Map[(String, String), TableMigrator[?, ?, ?, ?]] =
+      inline erasedValue[FromNamedTables] match {
+        case _: EmptyTuple => Map.empty
+        case _: (NamedTable[name, table] *: tl) =>
+          migrators[tl, ToNamesTables] ++ migratorTo[name, table, ToNamesTables]
+      }
+  }
+
+  sealed trait RawCommand[Q <: String]
+
+  object RawCommand {
+    type FromTypes[Types <: Tuple] <: Tuple =
+      Types match {
+        case EmptyTuple   => EmptyTuple
+        case Raw[q] *: tl => RawCommand[q] *: FromTypes[tl]
+        case _ *: tl      => FromTypes[tl]
+      }
+
+    inline def queries[RawCommands <: Tuple]: List[String] =
+      inline erasedValue[RawCommands] match {
+        case _: EmptyTuple                => Nil
+        case _: (RawCommand[value] *: tl) => constValue[value] :: queries[tl]
+      }
+  }
+
+  inline def tMigration[From <: Product, To <: Product](using
+      mFrom: Mirror.ProductOf[From],
+      mTo: Mirror.ProductOf[To],
+      evFromNamesStr: Tuple.Union[mFrom.MirroredElemLabels] <:< String,
+      evToNamesStr: Tuple.Union[mTo.MirroredElemLabels] <:< String
+  ): List[String] = {
+    val fromNames: Set[String] = evFromNamesStr.substituteCo(constValueTuple[mFrom.MirroredElemLabels].toList).toSet
+    val toNames: Set[String] = evToNamesStr.substituteCo(constValueTuple[mTo.MirroredElemLabels].toList).toSet
+
+    type ToColumns = Column.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]
+    val toPgTypes = Column.pgTypes[ToColumns]
+
+    toNames.diff(fromNames).map(s => s"ADD COLUMN $s ${toPgTypes(s).renderCtor}").toList :::
+      fromNames.diff(toNames).map(s => s"DROP COLUMN $s").toList
+  }
+
+  trait TableMigrator[NameFrom <: String, From <: Product, NameTo <: String, To <: Product] {
+    def render: List[String]
+  }
+
+  object TableMigrator {
+    inline given [NameFrom <: String, From <: Product, NameTo <: String, To <: Product](using
+        mFrom: Mirror.ProductOf[From],
+        mTo: Mirror.ProductOf[To],
+        evFromNamesStr: Tuple.Union[mFrom.MirroredElemLabels] <:< String,
+        evToNamesStr: Tuple.Union[mTo.MirroredElemLabels] <:< String
+    ): TableMigrator[NameFrom, From, NameTo, To] = new {
+
+      override def render: List[String] = tMigration[From, To].map(s"ALTER TABLE ${constValue[NameFrom]} " + _)
     }
   }
 
-  object Table {
-    object Drop {
-      enum Flag {
-        case Restrict
-        case Cascade
-      }
+  trait TableCtor[Name <: String, T <: Product] {
+    def render: String
+  }
 
-      extension (f: Flag) {
-        def toSql: String = f match {
-          case Flag.Restrict => " restrict "
-          case Flag.Cascade  => " cascade "
-        }
-      }
+  object TableCtor {
+    inline given [Name <: String, T <: Product](using mm: Mirror.ProductOf[T]): TableCtor[Name, T] = new {
+      type Columns = Column.FromNamesAndTypes[mm.MirroredElemLabels, mm.MirroredElemTypes]
+      val columnCtors = Column.ctors[Columns]
+
+      override def render: String = "CREATE TABLE " + constValue[Name] +
+        columnCtors
+          .map { (name, tpe) => s"$name ${tpe.renderCtor}" }
+          .mkString("(", ",", ")")
     }
   }
 
-  object Alter {
+  trait SchemaMod[A] {
+    def createTable(name: String): String
+    def dropTable(name: String): String
+    def raw: List[String]
+  }
 
-    enum Target {
-      case Table(name: Relation.Name, op: Alter.Table.Operation)
-    }
+  object SchemaMod {
+    def apply[A](using mod: SchemaMod[A]) = mod
 
-    object Target {
-      object Table {
-        extension (alterTable: Table) {
-          def query: String = s" alter table ${alterTable.name.toSql} ${alterTable.op.toSql} "
-        }
-      }
-    }
+    inline given [S <: Product](using mm: Mirror.ProductOf[S]): SchemaMod[S] = new {
+      type Tables = NamedTable.FromNamesAndTypes[mm.MirroredElemLabels, mm.MirroredElemTypes]
+      val tableCtors = NamedTable.ctors[Tables]
 
-    object Table {
-      enum Operation {
-        case Add(what: Table.Add.Target)
-        case Rename(what: Table.Rename.Target)
-        case Drop(what: Table.Drop.Target)
-        case Alter(what: Table.Alter.Target)
-      }
+      type RawCommands = RawCommand.FromTypes[mm.MirroredElemTypes]
+      val rawCommadQueries = RawCommand.queries[RawCommands]
 
-      extension (op: Operation) {
-        def toSql: String = op match {
-          case Operation.Add(what)    => what.toSql
-          case Operation.Rename(what) => what.toSql
-          case Operation.Drop(what)   => what.toSql
-          case Operation.Alter(what)  => what.toSql
-        }
-      }
+      override def createTable(name: String): String = tableCtors(name).render
 
-      object Add {
-        enum Target {
-          case Column(name: String, dataType: Type, nullable: Boolean = true)
-        }
+      override def dropTable(name: String): String = s"DROP TABLE $name"
 
-        extension (t: Target) {
-          def toSql: String = t match {
-            case Target.Column(name, dataType, nullable) =>
-              s" add column $name ${dataType.toSql}${if (nullable) "" else " not null"} "
-          }
-        }
-      }
+      override def raw: List[String] = rawCommadQueries
 
-      object Rename {
-        enum Target {
-          case Column(name: String, to: String)
-          case Constraint(name: String, to: String)
-          case Table(to: String)
-        }
-
-        extension (t: Target) {
-          def toSql: String = t match {
-            case Target.Column(name, to)     => s" rename column $name to $to "
-            case Target.Constraint(name, to) => s" rename constraint $name to $to "
-            case Target.Table(to)            => s" rename to $to "
-          }
-        }
-      }
-
-      object Drop {
-
-        enum Target {
-          case Column(name: String, flag: Option[Migration.Table.Drop.Flag] = None)
-          case Constraint(name: String, flag: Option[Migration.Table.Drop.Flag] = None)
-        }
-
-        extension (t: Target) {
-          def toSql: String = t match {
-            case Target.Column(name, flag)     => s" drop column $name${flag.fold("")(_.toSql)} "
-            case Target.Constraint(name, flag) => s" drop constraint $name${flag.fold("")(_.toSql)} "
-          }
-        }
-      }
-
-      object Alter {
-        enum Operation {
-          case SetType(tpe: Type)
-          case SetDefault(expr: String) // TODO: need some SQL dsl here instead of a raw string
-          case DropDefault
-          case SetNotNull
-          case DropNotNull
-        }
-
-        extension (op: Operation) {
-          def toSql: String = op match {
-            case Operation.SetType(tpe)     => s" type ${tpe.toSql} "
-            case Operation.SetDefault(expr) => s" set default $expr "
-            case Operation.DropDefault      => " drop default "
-            case Operation.SetNotNull       => " set not null "
-            case Operation.DropNotNull      => " drop not null "
-          }
-        }
-
-        enum Target {
-          case Column(name: String, op: Operation)
-        }
-
-        extension (t: Target) {
-          def toSql: String = t match {
-            case Target.Column(name, op) => s" alter column $name ${op.toSql} "
-          }
-        }
-      }
     }
   }
 
-  object Drop {
-    enum Target {
-      case Table(name: Relation.Name, flag: Option[Migration.Table.Drop.Flag] = None)
-      case Tables(names: List[Relation.Name], flag: Option[Migration.Table.Drop.Flag] = None)
-    }
+  trait SchemaMig[From, To] {
+    def migrateTable(name: String): List[String]
+  }
 
-    object Target {
-      object Table {
-        extension (dropTable: Table) {
-          def query: String = s"drop table ${dropTable.name.toSql}"
-        }
-      }
+  object SchemaMig {
+    def apply[From, To](using mig: SchemaMig[From, To]) = mig
 
-      object Tables {
-        extension (dropTables: Tables) {
-          def query: String = dropTables.names.map(Table(_, dropTables.flag).query).mkString("; ")
-        }
-      }
+    inline given [From <: Product, To <: Product](using
+        mFrom: Mirror.ProductOf[From],
+        mTo: Mirror.ProductOf[To]
+    ): SchemaMig[From, To] = new {
+      type FromTables = NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]
+      type ToTables = NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]
+      val tableMigrators = NamedTable.migrators[FromTables, ToTables]
+
+      override def migrateTable(name: String): List[String] = tableMigrators(name -> name).render
     }
   }
 
-  sealed trait MigrationF[+R]
+  inline def migration[From <: Product, To <: Product](using
+      mFrom: Mirror.ProductOf[From],
+      mTo: Mirror.ProductOf[To],
+      evFromS: Tuple.Union[
+        NamedTable.Names[NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]
+      ] <:< String,
+      evToS: Tuple.Union[
+        NamedTable.Names[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
+      ] <:< String,
+      fromMod: SchemaMod[From],
+      toMod: SchemaMod[To],
+      mig: SchemaMig[From, To]
+  ): Migration = {
+    val fromTableNames = evFromS
+      .substituteCo(
+        constValueTuple[
+          NamedTable.Names[NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]
+        ].toList
+      )
+      .toSet
 
-  case object InitF extends MigrationF[Nothing]
-  final case class CreateF[R](was: R, what: Schema.Relation) extends MigrationF[R]
-  final case class AlterF[R](was: R, what: Migration.Alter.Target) extends MigrationF[R]
-  final case class DropF[R](was: R, what: Migration.Drop.Target) extends MigrationF[R]
-  final case class RawF[R](was: R, what: String) extends MigrationF[R]
+    val toTableNames = evToS
+      .substituteCo(
+        constValueTuple[
+          NamedTable.Names[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
+        ].toList
+      )
+      .toSet
 
-  given Covariant[MigrationF] with {
-    override def map[A, B](f: A => B): MigrationF[A] => MigrationF[B] = {
-      case InitF              => InitF
-      case CreateF(was, what) => CreateF(f(was), what)
-      case AlterF(was, what)  => AlterF(f(was), what)
-      case DropF(was, what)   => DropF(f(was), what)
-      case RawF(was, what)    => RawF(f(was), what)
-    }
+    val newTables = toTableNames.diff(fromTableNames)
+    val retainedTables = toTableNames.intersect(fromTableNames)
+    val droppedTables = fromTableNames.diff(toTableNames)
+
+    Migration(
+      newTables.toList.map(toMod.createTable(_)) :::
+        retainedTables.toList.flatMap(mig.migrateTable(_)) :::
+        droppedTables.toList.map(fromMod.dropTable(_)) :::
+        toMod.raw
+    )
   }
 
 }

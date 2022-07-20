@@ -6,9 +6,10 @@ import java.time.Instant
 import scala.util.chaining.*
 
 import zio.*
+import zio.prelude.*
 
 import connection.*
-import ddl.Migration
+import ddl.Schema
 import decode.Field
 import protocol.Packet
 import protocol.Parser
@@ -18,33 +19,39 @@ import replication.Wal.LogicalReplication
 object Main extends ZIOAppDefault {
   import decode.Decoder.*
 
-  inline def m = {
+  object Schema {
     import ddl.*
 
-    migration(
-      createTable(
-        "test".public,
-        column("id", Type.Int, primaryKey = true) ::
-          column("value", Type.Text, nullable = false) ::
-          Nil
-      ) andThen
-        alterTable("test".public, addColumn("y", Type.Int)) andThen
-        alterTable("test".public, renameColumn("y", "x")) andThen
-        raw("create publication testpub for table test") andThen
-        raw("select * from pg_create_logical_replication_slot('testsub', 'pgoutput')")
-    )
-  }
+    final case class SchemaV0()
 
-  val schOrError = m.toSchema
+    final case class TestV1(id: PrimaryKey[Int], value: String)
+    final case class SchemaV1(test: Table[TestV1])
+
+    final case class TestV2(id: PrimaryKey[Int], value: String, y: Option[Int])
+    final case class DummyV2(zzz: Int)
+    final case class SchemaV2(test: Table[TestV2], dummy: Table[DummyV2])
+
+    final case class TestV3(id: PrimaryKey[Int], value: String, x: Option[Int])
+    final case class SchemaV3(
+        test: Table[TestV3],
+        createPublication: Raw["create publication testpub for table test"],
+        replicationSlot: Raw["select * from pg_create_logical_replication_slot('testsub', 'pgoutput')"]
+    )
+
+    val m0 = Migration.migration[SchemaV0, SchemaV1]
+    val m1 = Migration.migration[SchemaV1, SchemaV2]
+    val m2 = Migration.migration[SchemaV2, SchemaV3]
+
+    val migration = m0 combine m1 combine m2
+
+  }
 
   val init = for {
     conn <- ZIO.service[Connection]
     proto <- conn.init(None)
-    sch <- ZIO.fromEither(schOrError) // this validates the migration before trying to actually apply it
-    _ <- Console.printLine(s"Schema: $sch")
     _ <- Console.printLine("Migration:")
-    _ <- ZIO.foreach(m.toSql)(Console.printLine(_))
-    _ <- m.toApply.provide(ZLayer.succeed(proto))
+    _ <- ZIO.foreach(Schema.migration.queries)(Console.printLine(_))
+    _ <- Schema.migration.toApply.provide(ZLayer.succeed(proto))
   } yield ()
 
   val stream = for {
