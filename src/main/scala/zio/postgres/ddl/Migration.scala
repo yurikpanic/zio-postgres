@@ -153,6 +153,38 @@ object Migration {
       }
   }
 
+  sealed trait NamedPublication[Name <: String, Tables <: Tuple]
+
+  object NamedPublication {
+
+    type ExtractTables[T] <: Tuple = T match {
+      case EmptyTuple => EmptyTuple
+      case t *: tl    => t *: tl
+      case s & String => s *: EmptyTuple
+    }
+
+    type FromNamesTypesAndTables[Names <: Tuple, Types <: Tuple] <: Tuple =
+      (Names, Types) match {
+        case (EmptyTuple, EmptyTuple) => EmptyTuple
+
+        case (n *: nTl, Publication[ts] *: tTl) =>
+          NamedPublication[n, ExtractTables[ts]] *: FromNamesTypesAndTables[nTl, tTl]
+
+        case (_ *: nTl, _ *: tTl) => FromNamesTypesAndTables[nTl, tTl]
+      }
+
+    // TODO: need to check if the table name specified for publication exists
+
+    inline def publications[Ps <: Tuple]: Map[String, List[String]] =
+      inline erasedValue[Ps] match {
+        case _: EmptyTuple => Map.empty
+        case _: (NamedPublication[name, tables] *: tl) =>
+          publications[tl] + (constValue[name] ->
+            summonInline[Tuple.Union[tables] <:< String]
+              .substituteCo(constValueTuple[tables].toList))
+      }
+  }
+
   inline def tMigration[From <: Product, To <: Product](using
       mFrom: Mirror.ProductOf[From],
       mTo: Mirror.ProductOf[To],
@@ -288,12 +320,27 @@ object Migration {
     val retainedTables = toTableNames.intersect(fromTableNames)
     val droppedTables = fromTableNames.diff(toTableNames)
 
+    val fromPubs = NamedPublication
+      .publications[NamedPublication.FromNamesTypesAndTables[
+        mFrom.MirroredElemLabels,
+        mFrom.MirroredElemTypes,
+      ]]
+    val toPubs = NamedPublication
+      .publications[NamedPublication.FromNamesTypesAndTables[
+        mTo.MirroredElemLabels,
+        mTo.MirroredElemTypes,
+      ]]
+
+    val newPubNames = toPubs.keySet.diff(fromPubs.keySet)
+    val droppedPubNames = fromPubs.keySet.diff(toPubs.keySet)
+
     Migration(
       mig.migrateExtensions :::
         newTables.toList.map(toMod.createTable(_)) :::
         retainedTables.toList.flatMap(mig.migrateTable(_)) :::
         droppedTables.toList.map(fromMod.dropTable(_)) :::
-        toMod.raw
+        toMod.raw :::
+        newPubNames.toList.map(s => s"CREATE PUBLICATION $s FOR TABLE ${toPubs(s).mkString(", ")}")
     )
   }
 

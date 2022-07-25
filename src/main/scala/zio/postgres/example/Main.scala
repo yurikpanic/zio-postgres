@@ -57,7 +57,7 @@ object Main extends ZIOAppDefault {
     final case class TestV3(id: PrimaryKey[Int], value: String, x: Option[Int])
     final case class SchemaV3(
         test: Table[TestV3],
-        createPublication: Raw["create publication testpub for table test"],
+        testpub: Publication["test"],
         replicationSlot: Raw["select * from pg_create_logical_replication_slot('testsub', 'pgoutput')"],
         postgis: Extensions[PostgisExts]
     )
