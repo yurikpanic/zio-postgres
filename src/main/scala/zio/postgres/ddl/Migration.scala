@@ -163,14 +163,14 @@ object Migration {
       case s & String => s *: EmptyTuple
     }
 
-    type FromNamesTypesAndTables[Names <: Tuple, Types <: Tuple] <: Tuple =
+    type FromNamesAndTypes[Names <: Tuple, Types <: Tuple] <: Tuple =
       (Names, Types) match {
         case (EmptyTuple, EmptyTuple) => EmptyTuple
 
         case (n *: nTl, Publication[ts] *: tTl) =>
-          NamedPublication[n, ExtractTables[ts]] *: FromNamesTypesAndTables[nTl, tTl]
+          NamedPublication[n, ExtractTables[ts]] *: FromNamesAndTypes[nTl, tTl]
 
-        case (_ *: nTl, _ *: tTl) => FromNamesTypesAndTables[nTl, tTl]
+        case (_ *: nTl, _ *: tTl) => FromNamesAndTypes[nTl, tTl]
       }
 
     inline def checkTable[Table, AvailTables <: Tuple]: Unit =
@@ -198,6 +198,23 @@ object Migration {
           publications[tl, AllTableNames] + (constValue[name] ->
             summonInline[Tuple.Union[tables] <:< String]
               .substituteCo(constValueTuple[tables].toList))
+      }
+  }
+
+  sealed trait NamedReplicationSlot[Name <: String, Plugin <: String]
+
+  object NamedReplicationSlot {
+    type FromNamesAndTypes[Names <: Tuple, Types <: Tuple] <: Tuple =
+      (Names, Types) match {
+        case (EmptyTuple, EmptyTuple)              => EmptyTuple
+        case (n *: nTl, ReplicationSlot[t] *: tTl) => NamedReplicationSlot[n, t] *: FromNamesAndTypes[nTl, tTl]
+        case (_ *: nTl, _ *: tTl)                  => FromNamesAndTypes[nTl, tTl]
+      }
+
+    inline def slots[Rs <: Tuple]: List[(String, String)] =
+      inline erasedValue[Rs] match {
+        case _: EmptyTuple                                 => Nil
+        case _: (NamedReplicationSlot[name, plugin] *: tl) => (constValue[name] -> constValue[plugin]) :: slots[tl]
       }
   }
 
@@ -298,16 +315,17 @@ object Migration {
       droppedTables.toList.map(s => s"DROP TABLE $s")
 
     val fromPubs = NamedPublication
-      .publications[NamedPublication.FromNamesTypesAndTables[
+      .publications[NamedPublication.FromNamesAndTypes[
         mFrom.MirroredElemLabels,
         mFrom.MirroredElemTypes,
       ], NamedTable.Names[NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]]
     val toPubs = NamedPublication
-      .publications[NamedPublication.FromNamesTypesAndTables[
+      .publications[NamedPublication.FromNamesAndTypes[
         mTo.MirroredElemLabels,
         mTo.MirroredElemTypes,
       ], NamedTable.Names[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]]
 
+    // TODO: support altering existing publications
     val newPubNames = toPubs.keySet.diff(fromPubs.keySet)
     val droppedPubNames = fromPubs.keySet.diff(toPubs.keySet)
 
@@ -315,12 +333,28 @@ object Migration {
       newPubNames.toList.map(s => s"CREATE PUBLICATION $s FOR TABLE ${toPubs(s).mkString(", ")}") :::
         droppedPubNames.toList.map(s => s"DROP PUBLICATION $s")
 
+    val fromReplicationSlots = NamedReplicationSlot
+      .slots[NamedReplicationSlot.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]
+    val toReplicationSlots = NamedReplicationSlot
+      .slots[NamedReplicationSlot.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
+
+    // TODO: support changed output plugins (error or alter (or drop and re-create))
+    val newSlots = toReplicationSlots.map(_._1).diff(fromReplicationSlots.map(_._1))
+    val droppedSlots = fromReplicationSlots.map(_._1).diff(toReplicationSlots.map(_._1))
+
+    val migrateReplicationSlots =
+      newSlots.map(s =>
+        s"SELECT * FROM pg_create_logical_replication_slot('$s', '${toReplicationSlots.find(_._1 == s).get._2}')"
+      ) :::
+        droppedSlots.map(s => s"SELECT * FROM pg_drop_replication_slot('$s')")
+
     val rawCommadQueries = RawCommand.queries[RawCommand.FromTypes[mTo.MirroredElemTypes]]
 
     Migration(
       migrateExtensions :::
         migrateTables :::
         migratePublicatins :::
+        migrateReplicationSlots :::
         rawCommadQueries
     )
   }
