@@ -173,13 +173,29 @@ object Migration {
         case (_ *: nTl, _ *: tTl) => FromNamesTypesAndTables[nTl, tTl]
       }
 
-    // TODO: need to check if the table name specified for publication exists
+    inline def checkTable[Table, AvailTables <: Tuple]: Unit =
+      inline erasedValue[AvailTables] match {
+        case _: EmptyTuple =>
+          error("Table " + constValue[Table] + " is not present in the schema - can not use it for publication")
+        case _: (Table *: tl) => ()
+        case _: (_ *: tl)     => checkTable[Table, tl]
+      }
 
-    inline def publications[Ps <: Tuple]: Map[String, List[String]] =
+    inline def checkTablesPresent[PubTables <: Tuple, AvailTables <: Tuple]: Unit =
+      inline erasedValue[PubTables] match {
+        case _: EmptyTuple  => ()
+        case _: (pub *: tl) => checkTable[pub, AvailTables]; checkTablesPresent[tl, AvailTables]
+
+      }
+
+    inline def publications[Ps <: Tuple, AllTableNames <: Tuple]: Map[String, List[String]] =
       inline erasedValue[Ps] match {
         case _: EmptyTuple => Map.empty
+
         case _: (NamedPublication[name, tables] *: tl) =>
-          publications[tl] + (constValue[name] ->
+          checkTablesPresent[tables, AllTableNames]
+
+          publications[tl, AllTableNames] + (constValue[name] ->
             summonInline[Tuple.Union[tables] <:< String]
               .substituteCo(constValueTuple[tables].toList))
       }
@@ -235,7 +251,6 @@ object Migration {
 
   trait SchemaMod[A] {
     def createTable(name: String): String
-    def dropTable(name: String): String
     def raw: List[String]
   }
 
@@ -250,8 +265,6 @@ object Migration {
       val rawCommadQueries = RawCommand.queries[RawCommands]
 
       override def createTable(name: String): String = tableCtors(name).render
-
-      override def dropTable(name: String): String = s"DROP TABLE $name"
 
       override def raw: List[String] = rawCommadQueries
 
@@ -324,12 +337,12 @@ object Migration {
       .publications[NamedPublication.FromNamesTypesAndTables[
         mFrom.MirroredElemLabels,
         mFrom.MirroredElemTypes,
-      ]]
+      ], NamedTable.Names[NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]]
     val toPubs = NamedPublication
       .publications[NamedPublication.FromNamesTypesAndTables[
         mTo.MirroredElemLabels,
         mTo.MirroredElemTypes,
-      ]]
+      ], NamedTable.Names[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]]
 
     val newPubNames = toPubs.keySet.diff(fromPubs.keySet)
     val droppedPubNames = fromPubs.keySet.diff(toPubs.keySet)
@@ -338,7 +351,7 @@ object Migration {
       mig.migrateExtensions :::
         newTables.toList.map(toMod.createTable(_)) :::
         retainedTables.toList.flatMap(mig.migrateTable(_)) :::
-        droppedTables.toList.map(fromMod.dropTable(_)) :::
+        droppedTables.toList.map(s => s"DROP TABLE $s") :::
         toMod.raw :::
         newPubNames.toList.map(s => s"CREATE PUBLICATION $s FOR TABLE ${toPubs(s).mkString(", ")}")
     )
