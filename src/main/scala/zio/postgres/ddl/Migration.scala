@@ -249,80 +249,33 @@ object Migration {
     }
   }
 
-  trait SchemaMod[A] {
-    def createTable(name: String): String
-    def raw: List[String]
-  }
-
-  object SchemaMod {
-    def apply[A](using mod: SchemaMod[A]) = mod
-
-    inline given [S <: Product](using mm: Mirror.ProductOf[S]): SchemaMod[S] = new {
-      type Tables = NamedTable.FromNamesAndTypes[mm.MirroredElemLabels, mm.MirroredElemTypes]
-      val tableCtors = NamedTable.ctors[Tables]
-
-      type RawCommands = RawCommand.FromTypes[mm.MirroredElemTypes]
-      val rawCommadQueries = RawCommand.queries[RawCommands]
-
-      override def createTable(name: String): String = tableCtors(name).render
-
-      override def raw: List[String] = rawCommadQueries
-
-    }
-  }
-
-  trait SchemaMig[From, To] {
-    def migrateTable(name: String): List[String]
-    def migrateExtensions: List[String]
-  }
-
-  object SchemaMig {
-    def apply[From, To](using mig: SchemaMig[From, To]) = mig
-
-    inline given [From <: Product, To <: Product](using
-        mFrom: Mirror.ProductOf[From],
-        mTo: Mirror.ProductOf[To]
-    ): SchemaMig[From, To] = new {
-      type FromTables = NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]
-      type ToTables = NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]
-      val tableMigrators = NamedTable.migrators[FromTables, ToTables]
-
-      val fromExtensions = Extension.extensions[Extension.FromTypes[mFrom.MirroredElemTypes]]
-      val toExtensions = Extension.extensions[Extension.FromTypes[mTo.MirroredElemTypes]]
-
-      override def migrateTable(name: String): List[String] = tableMigrators(name -> name).render
-
-      override def migrateExtensions: List[String] = {
-        val newExtensions = toExtensions.diff(fromExtensions)
-        val droppedEtensions = fromExtensions.diff(toExtensions)
-
-        newExtensions.map(s => s"CREATE EXTENSION $s") :::
-          droppedEtensions.map(s => s"DROP EXTENSION $s")
-      }
-    }
-  }
-
   inline def migration[From <: Product, To <: Product](using
       mFrom: Mirror.ProductOf[From],
       mTo: Mirror.ProductOf[To],
-      evFromS: Tuple.Union[
+      evTabFromS: Tuple.Union[
         NamedTable.Names[NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]
       ] <:< String,
-      evToS: Tuple.Union[
+      evTabToS: Tuple.Union[
         NamedTable.Names[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
-      ] <:< String,
-      fromMod: SchemaMod[From],
-      toMod: SchemaMod[To],
-      mig: SchemaMig[From, To]
+      ] <:< String
   ): Migration = {
-    val fromTableNames = evFromS
+    val fromExtensions = Extension.extensions[Extension.FromTypes[mFrom.MirroredElemTypes]]
+    val toExtensions = Extension.extensions[Extension.FromTypes[mTo.MirroredElemTypes]]
+
+    val newExtensions = toExtensions.diff(fromExtensions)
+    val droppedEtensions = fromExtensions.diff(toExtensions)
+
+    val migrateExtensions = newExtensions.map(s => s"CREATE EXTENSION $s") :::
+      droppedEtensions.map(s => s"DROP EXTENSION $s")
+
+    val fromTableNames = evTabFromS
       .substituteCo(
         constValueTuple[
           NamedTable.Names[NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]
         ].toList
       )
 
-    val toTableNames = evToS
+    val toTableNames = evTabToS
       .substituteCo(
         constValueTuple[
           NamedTable.Names[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
@@ -332,6 +285,17 @@ object Migration {
     val newTables = toTableNames.diff(fromTableNames)
     val retainedTables = toTableNames.intersect(fromTableNames)
     val droppedTables = fromTableNames.diff(toTableNames)
+
+    val tableCtors = NamedTable.ctors[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
+
+    val tableMigrators = NamedTable.migrators[NamedTable.FromNamesAndTypes[
+      mFrom.MirroredElemLabels,
+      mFrom.MirroredElemTypes
+    ], NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
+
+    val migrateTables = newTables.toList.map(tableCtors(_).render) :::
+      retainedTables.toList.flatMap(x => tableMigrators(x -> x).render) :::
+      droppedTables.toList.map(s => s"DROP TABLE $s")
 
     val fromPubs = NamedPublication
       .publications[NamedPublication.FromNamesTypesAndTables[
@@ -347,13 +311,17 @@ object Migration {
     val newPubNames = toPubs.keySet.diff(fromPubs.keySet)
     val droppedPubNames = fromPubs.keySet.diff(toPubs.keySet)
 
+    val migratePublicatins =
+      newPubNames.toList.map(s => s"CREATE PUBLICATION $s FOR TABLE ${toPubs(s).mkString(", ")}") :::
+        droppedPubNames.toList.map(s => s"DROP PUBLICATION $s")
+
+    val rawCommadQueries = RawCommand.queries[RawCommand.FromTypes[mTo.MirroredElemTypes]]
+
     Migration(
-      mig.migrateExtensions :::
-        newTables.toList.map(toMod.createTable(_)) :::
-        retainedTables.toList.flatMap(mig.migrateTable(_)) :::
-        droppedTables.toList.map(s => s"DROP TABLE $s") :::
-        toMod.raw :::
-        newPubNames.toList.map(s => s"CREATE PUBLICATION $s FOR TABLE ${toPubs(s).mkString(", ")}")
+      migrateExtensions :::
+        migrateTables :::
+        migratePublicatins :::
+        rawCommadQueries
     )
   }
 
