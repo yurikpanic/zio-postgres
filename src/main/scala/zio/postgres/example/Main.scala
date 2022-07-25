@@ -24,18 +24,42 @@ object Main extends ZIOAppDefault {
 
     final case class SchemaV0()
 
+    type PostgisExts = (
+        "postgis",
+        "postgis_raster",
+        "postgis_topology",
+        "postgis_sfcgal",
+        "fuzzystrmatch",
+        "postgis_tiger_geocoder"
+    )
+
+    type AddressStandardizerExts = (
+        "address_standardizer",
+        "address_standardizer_data_us"
+    )
+
     final case class TestV1(id: PrimaryKey[Int], value: String)
-    final case class SchemaV1(test: Table[TestV1])
+    final case class SchemaV1(
+        test: Table[TestV1],
+        postgis: Extensions[PostgisExts],
+        addrStd: Extensions[AddressStandardizerExts]
+    )
 
     final case class TestV2(id: PrimaryKey[Int], value: String, y: Option[Int])
     final case class DummyV2(zzz: Int)
-    final case class SchemaV2(test: Table[TestV2], dummy: Table[DummyV2])
+    final case class SchemaV2(
+        test: Table[TestV2],
+        dummy: Table[DummyV2],
+        postgis: Extensions[PostgisExts],
+        addrStd: Extensions[AddressStandardizerExts]
+    )
 
     final case class TestV3(id: PrimaryKey[Int], value: String, x: Option[Int])
     final case class SchemaV3(
         test: Table[TestV3],
         createPublication: Raw["create publication testpub for table test"],
-        replicationSlot: Raw["select * from pg_create_logical_replication_slot('testsub', 'pgoutput')"]
+        replicationSlot: Raw["select * from pg_create_logical_replication_slot('testsub', 'pgoutput')"],
+        postgis: Extensions[PostgisExts]
     )
 
     val m0 = Migration.migration[SchemaV0, SchemaV1]

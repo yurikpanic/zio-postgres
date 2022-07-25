@@ -130,6 +130,29 @@ object Migration {
       }
   }
 
+  sealed trait Extension[E <: String]
+
+  object Extension {
+    type FromTuple[Exts <: Tuple] <: Tuple =
+      Exts match {
+        case EmptyTuple => EmptyTuple
+        case s *: tl    => Extension[s] *: FromTuple[tl]
+      }
+
+    type FromTypes[Types <: Tuple] <: Tuple =
+      Types match {
+        case EmptyTuple           => EmptyTuple
+        case Extensions[es] *: tl => Tuple.Concat[FromTuple[es], FromTypes[tl]]
+        case _ *: tl              => FromTypes[tl]
+      }
+
+    inline def extensions[ETs <: Tuple]: List[String] =
+      inline erasedValue[ETs] match {
+        case _: EmptyTuple            => Nil
+        case _: (Extension[es] *: tl) => constValue[es] :: extensions[tl]
+      }
+  }
+
   inline def tMigration[From <: Product, To <: Product](using
       mFrom: Mirror.ProductOf[From],
       mTo: Mirror.ProductOf[To],
@@ -205,6 +228,7 @@ object Migration {
 
   trait SchemaMig[From, To] {
     def migrateTable(name: String): List[String]
+    def migrateExtensions: List[String]
   }
 
   object SchemaMig {
@@ -218,7 +242,18 @@ object Migration {
       type ToTables = NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]
       val tableMigrators = NamedTable.migrators[FromTables, ToTables]
 
+      val fromExtensions = Extension.extensions[Extension.FromTypes[mFrom.MirroredElemTypes]]
+      val toExtensions = Extension.extensions[Extension.FromTypes[mTo.MirroredElemTypes]]
+
       override def migrateTable(name: String): List[String] = tableMigrators(name -> name).render
+
+      override def migrateExtensions: List[String] = {
+        val newExtensions = toExtensions.diff(fromExtensions)
+        val droppedEtensions = fromExtensions.diff(toExtensions)
+
+        newExtensions.map(s => s"CREATE EXTENSION $s") :::
+          droppedEtensions.map(s => s"DROP EXTENSION $s")
+      }
     }
   }
 
@@ -241,7 +276,6 @@ object Migration {
           NamedTable.Names[NamedTable.FromNamesAndTypes[mFrom.MirroredElemLabels, mFrom.MirroredElemTypes]]
         ].toList
       )
-      .toSet
 
     val toTableNames = evToS
       .substituteCo(
@@ -249,14 +283,14 @@ object Migration {
           NamedTable.Names[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
         ].toList
       )
-      .toSet
 
     val newTables = toTableNames.diff(fromTableNames)
     val retainedTables = toTableNames.intersect(fromTableNames)
     val droppedTables = fromTableNames.diff(toTableNames)
 
     Migration(
-      newTables.toList.map(toMod.createTable(_)) :::
+      mig.migrateExtensions :::
+        newTables.toList.map(toMod.createTable(_)) :::
         retainedTables.toList.flatMap(mig.migrateTable(_)) :::
         droppedTables.toList.map(fromMod.dropTable(_)) :::
         toMod.raw
