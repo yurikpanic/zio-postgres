@@ -50,7 +50,7 @@ object Migration {
         case Column[name, _] *: tl => name *: Names[tl]
       }
 
-    inline def pgTypes[Columns <: Tuple]: Map[String, PgType[?]] =
+    transparent inline def pgTypes[Columns <: Tuple]: Map[String, PgType[?]] =
       inline erasedValue[Columns] match {
         case _: EmptyTuple =>
           Map.empty
@@ -59,7 +59,7 @@ object Migration {
           pgTypes[tl] + (constValue[name] -> summonInline[PgType[tpe]])
       }
 
-    inline def ctors[Columns <: Tuple]: List[(String, PgType[?])] =
+    transparent inline def ctors[Columns <: Tuple]: List[(String, PgType[?])] =
       inline erasedValue[Columns] match {
         case _: EmptyTuple => Nil
 
@@ -68,48 +68,54 @@ object Migration {
       }
   }
 
-  sealed trait NamedTable[Name <: String, T <: Product]
+  sealed trait NamedTable[Name <: String, T <: Product, Conf <: Tuple]
 
   object NamedTable {
+    type ExtractAnyTable[Name <: String, X, Conf <: Tuple, Tail <: Tuple] <: Tuple =
+      X match {
+        case Table[t]     => NamedTable[Name, t, Conf] *: Tail
+        case Hawing[x, c] => ExtractAnyTable[Name, x, c *: Conf, Tail]
+        case _            => Tail
+      }
+
     type FromNamesAndTypes[Names <: Tuple, Types <: Tuple] <: Tuple =
       (Names, Types) match {
-        case (EmptyTuple, EmptyTuple)    => EmptyTuple
-        case (n *: nTl, Table[t] *: tTl) => NamedTable[n, t] *: FromNamesAndTypes[nTl, tTl]
-        case (_ *: nTl, _ *: tTl)        => FromNamesAndTypes[nTl, tTl]
+        case (EmptyTuple, EmptyTuple) => EmptyTuple
+        case (n *: nTl, x *: tTl)     => ExtractAnyTable[n, x, EmptyTuple, FromNamesAndTypes[nTl, tTl]]
       }
 
     type Names[NamedTables <: Tuple] <: Tuple =
       NamedTables match {
-        case EmptyTuple                => EmptyTuple
-        case NamedTable[name, _] *: tl => name *: Names[tl]
+        case EmptyTuple                   => EmptyTuple
+        case NamedTable[name, _, _] *: tl => name *: Names[tl]
       }
 
-    inline def ctors[NamedTables <: Tuple]: Map[String, TableCtor[?, ?]] =
+    transparent inline def ctors[NamedTables <: Tuple]: Map[String, TableCtor[?, ?]] =
       inline erasedValue[NamedTables] match {
         case _: EmptyTuple => Map.empty
-        case _: (NamedTable[name, table] *: tl) =>
+        case _: (NamedTable[name, table, _] *: tl) =>
           ctors[tl] + (constValue[name] -> summonInline[TableCtor[name, table]])
       }
 
-    inline def migratorTo[NameFrom <: String, From <: Product, ToNamesTables <: Tuple]
-        : Map[(String, String), TableMigrator[?, ?, ?, ?]] =
+    transparent inline def migrationsTo[NameFrom <: String, From <: Product, ToNamesTables <: Tuple]
+        : Map[(String, String), List[String]] =
       inline erasedValue[ToNamesTables] match {
         case _: EmptyTuple => Map.empty
-        case _: (NamedTable[NameFrom, table] *: tl) =>
+        case _: (NamedTable[NameFrom, table, conf] *: tl) =>
           Map(
             (constValue[NameFrom] -> constValue[NameFrom]) -> summonInline[
-              TableMigrator[NameFrom, From, NameFrom, table]
-            ]
+              TableMigrator[NameFrom, From, NameFrom, table, conf]
+            ].render
           )
-        case _: (NamedTable[_, _] *: tl) => migratorTo[NameFrom, From, tl]
+        case _: (NamedTable[_, _, _] *: tl) => migrationsTo[NameFrom, From, tl]
       }
 
-    inline def migrators[FromNamedTables <: Tuple, ToNamesTables <: Tuple]
-        : Map[(String, String), TableMigrator[?, ?, ?, ?]] =
+    transparent inline def migrations[FromNamedTables <: Tuple, ToNamesTables <: Tuple]
+        : Map[(String, String), List[String]] =
       inline erasedValue[FromNamedTables] match {
         case _: EmptyTuple => Map.empty
-        case _: (NamedTable[name, table] *: tl) =>
-          migrators[tl, ToNamesTables] ++ migratorTo[name, table, ToNamesTables]
+        case _: (NamedTable[name, table, _] *: tl) =>
+          migrations[tl, ToNamesTables] ++ migrationsTo[name, table, ToNamesTables]
       }
   }
 
@@ -123,7 +129,7 @@ object Migration {
         case _ *: tl      => FromTypes[tl]
       }
 
-    inline def queries[RawCommands <: Tuple]: List[String] =
+    transparent inline def queries[RawCommands <: Tuple]: List[String] =
       inline erasedValue[RawCommands] match {
         case _: EmptyTuple                => Nil
         case _: (RawCommand[value] *: tl) => constValue[value] :: queries[tl]
@@ -146,7 +152,7 @@ object Migration {
         case _ *: tl              => FromTypes[tl]
       }
 
-    inline def extensions[ETs <: Tuple]: List[String] =
+    transparent inline def extensions[ETs <: Tuple]: List[String] =
       inline erasedValue[ETs] match {
         case _: EmptyTuple            => Nil
         case _: (Extension[es] *: tl) => constValue[es] :: extensions[tl]
@@ -173,7 +179,7 @@ object Migration {
         case (_ *: nTl, _ *: tTl) => FromNamesAndTypes[nTl, tTl]
       }
 
-    inline def checkTable[Table, AvailTables <: Tuple]: Unit =
+    transparent inline def checkTable[Table, AvailTables <: Tuple]: Unit =
       inline erasedValue[AvailTables] match {
         case _: EmptyTuple =>
           error("Table " + constValue[Table] + " is not present in the schema - can not use it for publication")
@@ -181,14 +187,14 @@ object Migration {
         case _: (_ *: tl)     => checkTable[Table, tl]
       }
 
-    inline def checkTablesPresent[PubTables <: Tuple, AvailTables <: Tuple]: Unit =
+    transparent inline def checkTablesPresent[PubTables <: Tuple, AvailTables <: Tuple]: Unit =
       inline erasedValue[PubTables] match {
         case _: EmptyTuple  => ()
         case _: (pub *: tl) => checkTable[pub, AvailTables]; checkTablesPresent[tl, AvailTables]
 
       }
 
-    inline def publications[Ps <: Tuple, AllTableNames <: Tuple]: Map[String, List[String]] =
+    transparent inline def publications[Ps <: Tuple, AllTableNames <: Tuple]: Map[String, List[String]] =
       inline erasedValue[Ps] match {
         case _: EmptyTuple => Map.empty
 
@@ -211,42 +217,66 @@ object Migration {
         case (_ *: nTl, _ *: tTl)                  => FromNamesAndTypes[nTl, tTl]
       }
 
-    inline def slots[Rs <: Tuple]: List[(String, String)] =
+    transparent inline def slots[Rs <: Tuple]: List[(String, String)] =
       inline erasedValue[Rs] match {
         case _: EmptyTuple                                 => Nil
         case _: (NamedReplicationSlot[name, plugin] *: tl) => (constValue[name] -> constValue[plugin]) :: slots[tl]
       }
   }
 
-  inline def tMigration[From <: Product, To <: Product](using
+  transparent inline def checkColumn[Column <: String, ColumnNames <: Tuple]: Unit =
+    inline erasedValue[ColumnNames] match {
+      case _: EmptyTuple     => error("Column " + constValue[Column] + " not found. Can not use it for rename")
+      case _: (Column *: tl) => ()
+      case _: (_ *: tl)      => checkColumn[Column, tl]
+    }
+
+  transparent inline def tRenames[FromNames <: Tuple, ToNames <: Tuple, Conf <: Tuple]: List[(String, String)] =
+    inline erasedValue[Conf] match {
+      case _: EmptyTuple => Nil
+      case _: (RenamedFrom[to, from] *: tl) =>
+        checkColumn[to, ToNames]
+        checkColumn[from, FromNames]
+        (constValue[to] -> constValue[from]) :: tRenames[FromNames, ToNames, tl]
+    }
+
+  transparent inline def tMigration[From <: Product, To <: Product, Conf <: Tuple](using
       mFrom: Mirror.ProductOf[From],
       mTo: Mirror.ProductOf[To],
       evFromNamesStr: Tuple.Union[mFrom.MirroredElemLabels] <:< String,
       evToNamesStr: Tuple.Union[mTo.MirroredElemLabels] <:< String
   ): List[String] = {
-    val fromNames: Set[String] = evFromNamesStr.substituteCo(constValueTuple[mFrom.MirroredElemLabels].toList).toSet
-    val toNames: Set[String] = evToNamesStr.substituteCo(constValueTuple[mTo.MirroredElemLabels].toList).toSet
+    val fromNames = evFromNamesStr.substituteCo(constValueTuple[mFrom.MirroredElemLabels].toList)
+    val toNames = evToNamesStr.substituteCo(constValueTuple[mTo.MirroredElemLabels].toList)
 
     type ToColumns = Column.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]
     val toPgTypes = Column.pgTypes[ToColumns]
 
-    toNames.diff(fromNames).map(s => s"ADD COLUMN $s ${toPgTypes(s).renderCtor}").toList :::
-      fromNames.diff(toNames).map(s => s"DROP COLUMN $s").toList
+    val renames = tRenames[mFrom.MirroredElemLabels, mTo.MirroredElemLabels, Conf]
+    // .filter { (to, from) =>
+    //   toNames.contains(to) && fromNames.contains(from)
+    // }
+    val toRenames = renames.map(_._1)
+    val fromRenames = renames.map(_._2)
+
+    toNames.diff(fromNames).filterNot(toRenames.contains(_)).map(s => s"ADD COLUMN $s ${toPgTypes(s).renderCtor}") :::
+      fromNames.diff(toNames).filterNot(fromRenames.contains(_)).map(s => s"DROP COLUMN $s") :::
+      renames.map((to, from) => s"RENAME COLUMN $from to $to")
   }
 
-  trait TableMigrator[NameFrom <: String, From <: Product, NameTo <: String, To <: Product] {
+  trait TableMigrator[NameFrom <: String, From <: Product, NameTo <: String, To <: Product, Conf <: Tuple] {
     def render: List[String]
   }
 
   object TableMigrator {
-    inline given [NameFrom <: String, From <: Product, NameTo <: String, To <: Product](using
+    inline given [NameFrom <: String, From <: Product, NameTo <: String, To <: Product, Conf <: Tuple](using
         mFrom: Mirror.ProductOf[From],
         mTo: Mirror.ProductOf[To],
         evFromNamesStr: Tuple.Union[mFrom.MirroredElemLabels] <:< String,
         evToNamesStr: Tuple.Union[mTo.MirroredElemLabels] <:< String
-    ): TableMigrator[NameFrom, From, NameTo, To] = new {
+    ): TableMigrator[NameFrom, From, NameTo, To, Conf] = new {
 
-      override def render: List[String] = tMigration[From, To].map(s"ALTER TABLE ${constValue[NameFrom]} " + _)
+      override def render: List[String] = tMigration[From, To, Conf].map(s"ALTER TABLE ${constValue[NameFrom]} " + _)
     }
   }
 
@@ -266,7 +296,7 @@ object Migration {
     }
   }
 
-  inline def migration[From <: Product, To <: Product](using
+  transparent inline def migration[From <: Product, To <: Product](using
       mFrom: Mirror.ProductOf[From],
       mTo: Mirror.ProductOf[To],
       evTabFromS: Tuple.Union[
@@ -305,13 +335,13 @@ object Migration {
 
     val tableCtors = NamedTable.ctors[NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
 
-    val tableMigrators = NamedTable.migrators[NamedTable.FromNamesAndTypes[
+    val tableMigrations = NamedTable.migrations[NamedTable.FromNamesAndTypes[
       mFrom.MirroredElemLabels,
       mFrom.MirroredElemTypes
     ], NamedTable.FromNamesAndTypes[mTo.MirroredElemLabels, mTo.MirroredElemTypes]]
 
-    val migrateTables = newTables.toList.map(tableCtors(_).render) :::
-      retainedTables.toList.flatMap(x => tableMigrators(x -> x).render) :::
+    val migrateTables: List[String] = newTables.toList.map(tableCtors(_).render) :::
+      retainedTables.toList.flatMap(x => tableMigrations(x -> x)) :::
       droppedTables.toList.map(s => s"DROP TABLE $s")
 
     val fromPubs = NamedPublication

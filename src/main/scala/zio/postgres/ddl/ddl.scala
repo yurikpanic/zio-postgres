@@ -1,8 +1,14 @@
 package zio.postgres.ddl
 
+sealed trait Config
+
+sealed trait RenamedFrom[From <: String, To <: String] extends Config
+
 sealed trait PrimaryKey[A]
 
 sealed trait Table[A <: Product]
+
+sealed trait Hawing[T <: Table[?] | Hawing[?, ?], C <: Config]
 
 sealed trait Raw[Q <: String]
 
