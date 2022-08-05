@@ -9,7 +9,6 @@ import zio.*
 import zio.prelude.*
 
 import connection.*
-import ddl.Schema
 import decode.Field
 import protocol.Packet
 import protocol.Parser
@@ -56,7 +55,6 @@ object Main extends ZIOAppDefault {
 
     final case class TestV3(id: PrimaryKey[Int], value: String, x: Option[Int])
     final case class SchemaV3(
-        // test: Table[TestV3] Hawing ("x" RenamedFrom "y") Hawing ("b" RenamedFrom "c"),
         test: Table[TestV3] Hawing ("x" RenamedFrom "y"),
         testpub: Publication["test"],
         testsub: ReplicationSlot["pgoutput"],
