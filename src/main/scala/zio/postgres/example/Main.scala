@@ -85,17 +85,20 @@ object Main extends ZIOAppDefault {
         """START_REPLICATION SLOT "testsub" LOGICAL 0/0 (proto_version '1', publication_names '"testpub"')"""
       )(using {
         import replication.Decoder.*
-        message(proto)(Field.int ~ Field.text ~ Field.int.opt, Field.int.single)
+        import replication.Decoder.TupleDecoder.given
+
+        // message(proto)(Field.int ~ Field.text ~ Field.int.opt, Field.int.single)
+        message(proto)(TupleDecoder.forAllTableColumns[Schema.TestV3], Field.int.single)
       })
       .debug("Wal.LogicalReplication")
       .mapAccumZIO(Map.empty[Int, (String, Option[Int])]) {
-        case (acc, LogicalReplication.Insert(_, (id, value, x))) =>
-          val state = acc + (id -> (value -> x))
+        case (acc, LogicalReplication.Insert(_, test)) =>
+          val state = acc + (test.id.value -> (test.value -> test.x))
           Console.printLine(s"State [insert]: $state").as(state -> state)
 
-        case (acc, LogicalReplication.Update(_, key, (id, value, x))) =>
+        case (acc, LogicalReplication.Update(_, key, test)) =>
           val state = key.fold(acc)(_.fold(identity, identity).pipe(acc - _)) +
-            (id -> (value -> x))
+            (test.id.value -> (test.value -> test.x))
           Console.printLine(s"State [update]: $state").as(state -> state)
 
         case (acc, LogicalReplication.Delete(_, key)) =>

@@ -24,14 +24,23 @@ trait Field[A] {
 
 object Field {
 
-  val text: Field[String] = new Field {
+  given [A](using fd: Field[A]): Field[ddl.PrimaryKey[A]] = new {
+    override def bDecode(data: Option[Array[Byte]]): Either[DecodeError, ddl.PrimaryKey[A]] =
+      fd.bDecode(data).map(ddl.PrimaryKey.Id(_))
+    override def sDecode(data: Option[String]): Either[DecodeError, ddl.PrimaryKey[A]] =
+      fd.sDecode(data).map(ddl.PrimaryKey.Id(_))
+  }
+
+  given [A](using fd: Field[A]): Field[Option[A]] = fd.opt
+
+  given text: Field[String] = new Field {
     override def sDecode(data: Option[String]): Either[DecodeError, String] = data.toRight(DecodeError.NullUnexpected)
     override def bDecode(data: Option[Array[Byte]]): Either[DecodeError, String] = data
       .toRight(DecodeError.NullUnexpected)
       .map(new String(_, UTF_8))
   }
 
-  val int: Field[Int] = new Field {
+  given int: Field[Int] = new Field {
     override def sDecode(data: Option[String]): Either[DecodeError, Int] = data
       .toRight(DecodeError.NullUnexpected)
       .flatMap(_.toIntOption.toRight(DecodeError.ParseFailed(s"Failed to parse '$data' as Int")))

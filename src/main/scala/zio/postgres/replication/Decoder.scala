@@ -3,6 +3,9 @@ package replication
 
 import java.time.Instant
 
+import scala.compiletime.*
+import scala.deriving.Mirror
+
 import zio.*
 
 import decode.{Decoder => GDecoder}
@@ -82,6 +85,31 @@ object Decoder {
         case c :: _ => fd.decode(c)
         case _      => Left(DecodeError.ResultSetExhausted)
       }
+    }
+
+    given TupleDecoder[EmptyTuple] = new {
+      override def decode(xs: TupleData): Either[DecodeError, EmptyTuple] = Right(EmptyTuple)
+    }
+
+    given qq[T <: NonEmptyTuple](using
+        hd: Field[Tuple.Head[T]],
+        td: TupleDecoder[Tuple.Tail[T]]
+    ): TupleDecoder[T] = new {
+      override def decode(xs: TupleData): Either[DecodeError, T] = xs match {
+        case h :: tl =>
+          hd.decode(h).flatMap { hr =>
+            td.decode(tl).map(tr => (hr *: tr).asInstanceOf[T])
+          }
+        case _ => Left(DecodeError.ResultSetExhausted)
+      }
+    }
+
+    def forAllTableColumns[T <: Product](using
+        mm: Mirror.ProductOf[T],
+        td: TupleDecoder[mm.MirroredElemTypes]
+    ): TupleDecoder[T] = new {
+      override def decode(xs: TupleData): Either[DecodeError, T] =
+        td.decode(xs).map(x => mm.fromProduct(x))
     }
 
     given TupleDecoder[TupleData] = TupleDecoder((identity[TupleData] _).andThen(Right(_)))

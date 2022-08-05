@@ -1,7 +1,6 @@
 package zio.postgres.ddl
 
 import scala.compiletime.*
-import scala.compiletime.ops.string.*
 import scala.deriving.Mirror
 
 import zio.*
