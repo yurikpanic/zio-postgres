@@ -14,6 +14,8 @@ import protocol.Packet
 import protocol.Parser
 import replication.Wal
 import replication.Wal.LogicalReplication
+import zio.postgres.example.Main.Schema.TestV3
+import zio.postgres.decode.Decoder
 
 object Main extends ZIOAppDefault {
   import decode.Decoder.*
@@ -87,11 +89,8 @@ object Main extends ZIOAppDefault {
         import replication.Decoder.*
         import replication.Decoder.TupleDecoder.given
 
-        val columnTDs = TupleDecoder.forAllTableColumns[Schema.TestV3]
-        val keyTDs = TupleDecoder.forPrimaryKeys[Schema.TestV3]
-
         // message(proto)(Field.int ~ Field.text ~ Field.int.opt, Field.int.single)
-        message(proto)(columnTDs, keyTDs)
+        messageForTable[Schema.TestV3](proto)
       })
       .debug("Wal.LogicalReplication")
       .mapAccumZIO(Map.empty[Int, (String, Option[Int])]) {

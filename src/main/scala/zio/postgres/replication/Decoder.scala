@@ -35,8 +35,14 @@ object Decoder {
           }
         case _ => ZIO.succeed(s -> None)
       }
-
     }
+
+  inline def messageForTable[T <: Product](proto: Protocol)(using
+      mm: Mirror.ProductOf[T],
+      tdAll: TupleDecoder[mm.MirroredElemTypes],
+      tdKeys: TupleDecoder[TupleDecoder.PrimaryKeys[mm.MirroredElemTypes]]
+  ): GDecoder[Any, Packet, Wal.LogicalReplication[T, TupleDecoder.PrimaryKeys[mm.MirroredElemTypes]]] =
+    message(proto)(TupleDecoder.forAllTableColumns[T], TupleDecoder.forPrimaryKeys[T])
 
   def wal[A: TupleDecoder, K: TupleDecoder]: GDecoder[Any, Packet, Wal.Message[A, K]] =
     new WalGDecoder[Any, Wal.Message[A, K]] {
@@ -46,8 +52,14 @@ object Decoder {
 
         case _ => ZIO.succeed(s -> None)
       }
-
     }
+
+  inline def walForTable[T <: Product](using
+      mm: Mirror.ProductOf[T],
+      tdAll: TupleDecoder[mm.MirroredElemTypes],
+      tdKeys: TupleDecoder[TupleDecoder.PrimaryKeys[mm.MirroredElemTypes]]
+  ): GDecoder[Any, Packet, Wal.Message[T, TupleDecoder.PrimaryKeys[mm.MirroredElemTypes]]] =
+    wal(TupleDecoder.forAllTableColumns[T], TupleDecoder.forPrimaryKeys[T])
 
   extension [A](fd: Field[A]) {
 
