@@ -87,8 +87,11 @@ object Main extends ZIOAppDefault {
         import replication.Decoder.*
         import replication.Decoder.TupleDecoder.given
 
+        val columnTDs = TupleDecoder.forAllTableColumns[Schema.TestV3]
+        val keyTDs = TupleDecoder.forPrimaryKeys[Schema.TestV3]
+
         // message(proto)(Field.int ~ Field.text ~ Field.int.opt, Field.int.single)
-        message(proto)(TupleDecoder.forAllTableColumns[Schema.TestV3], Field.int.single)
+        message(proto)(columnTDs, keyTDs)
       })
       .debug("Wal.LogicalReplication")
       .mapAccumZIO(Map.empty[Int, (String, Option[Int])]) {
@@ -97,12 +100,12 @@ object Main extends ZIOAppDefault {
           Console.printLine(s"State [insert]: $state").as(state -> state)
 
         case (acc, LogicalReplication.Update(_, key, test)) =>
-          val state = key.fold(acc)(_.fold(identity, identity).pipe(acc - _)) +
+          val state = key.fold(acc)(_.fold(identity, identity).pipe(acc - _._1)) +
             (test.id.value -> (test.value -> test.x))
           Console.printLine(s"State [update]: $state").as(state -> state)
 
         case (acc, LogicalReplication.Delete(_, key)) =>
-          val state = acc - key.fold(identity, identity)
+          val state = acc - key.fold(_._1, _._1)
           Console.printLine(s"State [delete]: $state").as(state -> state)
 
         case (acc, message) =>

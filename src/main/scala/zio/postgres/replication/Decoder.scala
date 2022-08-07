@@ -91,7 +91,7 @@ object Decoder {
       override def decode(xs: TupleData): Either[DecodeError, EmptyTuple] = Right(EmptyTuple)
     }
 
-    given qq[T <: NonEmptyTuple](using
+    given [T <: NonEmptyTuple](using
         hd: Field[Tuple.Head[T]],
         td: TupleDecoder[Tuple.Tail[T]]
     ): TupleDecoder[T] = new {
@@ -111,6 +111,18 @@ object Decoder {
       override def decode(xs: TupleData): Either[DecodeError, T] =
         td.decode(xs).map(x => mm.fromProduct(x))
     }
+
+    type PrimaryKeys[ColumnTypes <: Tuple] <: Tuple =
+      ColumnTypes match {
+        case EmptyTuple                => EmptyTuple
+        case ddl.PrimaryKey[tpe] *: tl => tpe *: PrimaryKeys[tl]
+        case _ *: tl                   => PrimaryKeys[tl]
+      }
+
+    def forPrimaryKeys[T <: Product](using
+        mm: Mirror.ProductOf[T],
+        td: TupleDecoder[PrimaryKeys[mm.MirroredElemTypes]]
+    ): TupleDecoder[PrimaryKeys[mm.MirroredElemTypes]] = td
 
     given TupleDecoder[TupleData] = TupleDecoder((identity[TupleData] _).andThen(Right(_)))
 
